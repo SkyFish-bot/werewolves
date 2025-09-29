@@ -9,6 +9,40 @@ const io = new Server(server);
 const games = {}; // { roomId: { hostId, config, seats, players, roles, phase, nightActions, dayResults } }
 const hostConfigs = {}; // Temporary storage for host configurations
 
+// Game messages in multiple languages
+const messages = {
+  en: {
+    nightStart: 'Everyone, close your eyes',
+    werewolfPhase: 'Werewolves, open your eyes. Choose a player to kill.',
+    werewolfClose: 'Werewolves, close your eyes',
+    witchPhase: 'Witch, open your eyes',
+    witchClose: 'Witch, close your eyes',
+    seerPhase: 'Seer, open your eyes. Choose a player to check.',
+    seerClose: 'Seer, close your eyes',
+    dayStart: 'Everyone, open your eyes',
+    peacefulNight: 'Last night was a peaceful night',
+    deathAnnouncement: 'Players who died last night'
+  },
+  zh: {
+    nightStart: '天黑了，请大家闭眼',
+    werewolfPhase: '狼人请睁眼，请选择一个玩家杀死',
+    werewolfClose: '狼人请闭眼',
+    witchPhase: '女巫请睁眼',
+    witchClose: '女巫请闭眼',
+    seerPhase: '预言家请睁眼，请选择一个玩家查验',
+    seerClose: '预言家请闭眼',
+    dayStart: '天亮了，请大家睁眼',
+    peacefulNight: '昨夜是平安夜',
+    deathAnnouncement: '昨夜死亡的玩家'
+  }
+};
+
+function getMessage(gameId, messageKey) {
+  const game = games[gameId];
+  const language = game?.config?.language || 'en';
+  return messages[language]?.[messageKey] || messages.en[messageKey];
+}
+
 function generateRoomId() {
   return Math.random().toString(36).substr(2, 6).toUpperCase();
 }
@@ -232,7 +266,7 @@ io.on('connection', (socket) => {
     cb({ success: true, message: 'Target selected' });
 
     // Notify everyone that werewolves close eyes and proceed to witch phase
-    io.to(roomId).emit('phaseComplete', { message: 'Werewolves, close your eyes' });
+    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'werewolfClose') });
 
     setTimeout(() => startWitchPhase(roomId), 2000);
   });
@@ -265,7 +299,7 @@ io.on('connection', (socket) => {
     }
 
     // Notify everyone that witch closes eyes and proceed to seer phase
-    io.to(roomId).emit('phaseComplete', { message: 'Witch, close your eyes' });
+    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
 
     setTimeout(() => startSeerPhase(roomId), 2000);
     cb({ success: true });
@@ -294,7 +328,7 @@ io.on('connection', (socket) => {
 
     // Notify everyone that seer closes eyes and proceed to day phase
     setTimeout(() => {
-      io.to(roomId).emit('phaseComplete', { message: 'Seer, close your eyes' });
+      io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'seerClose') });
       setTimeout(() => startDayPhase(roomId), 2000);
     }, 3000);
   });
@@ -310,10 +344,11 @@ io.on('connection', (socket) => {
     let message;
 
     if (deaths.length === 0) {
-      message = 'Last night was a peaceful night';
+      message = getMessage(roomId, 'peacefulNight');
     } else {
       const deadPlayers = deaths.map(id => game.players[id].name);
-      message = `Players who died last night: ${deadPlayers.join(', ')}`;
+      const prefix = getMessage(roomId, 'deathAnnouncement');
+      message = `${prefix}: ${deadPlayers.join(', ')}`;
     }
 
     cb({ success: true, message });
@@ -370,7 +405,7 @@ function startNightPhase(roomId) {
   if (!game) return;
 
   // Announce night begins
-  io.to(roomId).emit('nightPhaseStarted', { message: 'Everyone, close your eyes' });
+  io.to(roomId).emit('nightPhaseStarted', { message: getMessage(roomId, 'nightStart') });
 
   // Start werewolf phase after a delay
   setTimeout(() => {
@@ -387,7 +422,7 @@ function startWerewolfPhase(roomId) {
   if (werewolves.length > 0) {
     // Send audio message to ALL players
     io.to(roomId).emit('werewolfPhaseAudio', {
-      message: 'Werewolves, open your eyes. Choose a player to kill.'
+      message: getMessage(roomId, 'werewolfPhase')
     });
 
     // Send UI only to werewolves
@@ -411,7 +446,7 @@ function startWitchPhase(roomId) {
   if (witches.length > 0) {
     // Send audio message to ALL players
     io.to(roomId).emit('witchPhaseAudio', {
-      message: 'Witch, open your eyes'
+      message: getMessage(roomId, 'witchPhase')
     });
 
     // Send UI only to witch
@@ -436,7 +471,7 @@ function startSeerPhase(roomId) {
   if (seers.length > 0) {
     // Send audio message to ALL players
     io.to(roomId).emit('seerPhaseAudio', {
-      message: 'Seer, open your eyes. Choose a player to check.'
+      message: getMessage(roomId, 'seerPhase')
     });
 
     // Send UI only to seer
@@ -471,7 +506,7 @@ function startDayPhase(roomId) {
 
   // Announce day begins
   io.to(roomId).emit('dayPhaseStarted', {
-    message: 'Everyone, open your eyes',
+    message: getMessage(roomId, 'dayStart'),
     deaths: deaths
   });
 }

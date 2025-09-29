@@ -58,9 +58,9 @@
 
     .seating-area {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 15px;
-      max-width: 800px;
+      max-width: 1000px;
       margin: 20px 0;
     }
 
@@ -285,12 +285,25 @@
     <h2>⚙️ Game Configuration</h2>
 
     <form class="config-form" onsubmit="configureGame(event)">
+      <label>Game Language:</label>
+      <select id="gameLanguage">
+        <option value="en">English</option>
+        <option value="zh">中文 (Chinese)</option>
+      </select>
+
       <label>Total Players:</label>
       <select id="totalPlayers" onchange="updateRoleInputs()">
         <option value="6">6 Players</option>
+        <option value="7">7 Players</option>
         <option value="8">8 Players</option>
+        <option value="9">9 Players</option>
         <option value="10">10 Players</option>
+        <option value="11">11 Players</option>
         <option value="12" selected>12 Players</option>
+        <option value="13">13 Players</option>
+        <option value="14">14 Players</option>
+        <option value="15">15 Players</option>
+        <option value="16">16 Players</option>
       </select>
 
       <label>Number of Werewolves:</label>
@@ -499,6 +512,7 @@
       }
 
       const config = {
+        language: document.getElementById('gameLanguage').value,
         totalPlayers: parseInt(document.getElementById('totalPlayers').value),
         numWerewolves: parseInt(document.getElementById('numWerewolves').value),
         numVillagers: parseInt(document.getElementById('numVillagers').value),
@@ -635,6 +649,9 @@
       document.getElementById('totalPlayerCount').textContent = config.totalPlayers;
       createSeatingArea(config.totalPlayers);
 
+      // Store the game language for audio
+      gameLanguage = config.language || 'en';
+
       // If we received seats data before the seating area was created, apply it now
       if (pendingSeats) {
         updateSeats(pendingSeats);
@@ -692,6 +709,7 @@
     let selectedPlayerId = null;
     let currentPhase = null;
     let witchActions = { saved: false, poisoned: false };
+    let gameLanguage = 'en'; // Default to English
 
     // Audio/Speech functionality
     let speechSynthesis = window.speechSynthesis;
@@ -711,6 +729,9 @@
       utterance.rate = 0.8; // Slightly slower for clarity
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
+
+      // Set language based on game configuration
+      utterance.lang = gameLanguage === 'zh' ? 'zh-CN' : 'en-US';
 
       utterance.onstart = () => {
         isSpeaking = true;
