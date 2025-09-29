@@ -6,7 +6,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const games = {}; // { roomId: { hostId, config, seats, players, roles, phase } }
+const games = {}; // { roomId: { hostId, config, seats, players, roles, phase, nightActions, dayResults } }
 const hostConfigs = {}; // Temporary storage for host configurations
 
 function generateRoomId() {
@@ -97,10 +97,10 @@ io.on('connection', (socket) => {
 
     cb({ success: true, message: 'Joined successfully!', isHost: socket.id === game.hostId });
 
-    // Send current game state to the new player
+    // Send current game state to the new player (gameConfig first, then updateSeats)
+    socket.emit('gameConfig', game.config);
     socket.emit('updateSeats', game.seats);
     socket.emit('updatePlayers', Object.values(game.players));
-    socket.emit('gameConfig', game.config);
 
     // If roles are already assigned, send role to this player
     if (game.roles[socket.id]) {
@@ -188,7 +188,22 @@ io.on('connection', (socket) => {
     }
 
     game.phase = 'night';
+    game.nightActions = {
+      werewolfKill: null,
+      witchSave: false,
+      witchPoison: null,
+      seerCheck: null,
+      seerResult: null
+    };
+    game.dayResults = {
+      deaths: [],
+      survived: []
+    };
+
     io.to(roomId).emit('gameStarted', { phase: 'night' });
+
+    // Start night phase
+    startNightPhase(roomId);
 
     cb({ success: true, message: 'Game started!' });
   });
@@ -204,6 +219,104 @@ io.on('connection', (socket) => {
     } else {
       cb({ success: false, message: 'Role not assigned yet' });
     }
+  });
+
+  // Werewolf action
+  socket.on('werewolfKill', ({ roomId, targetId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'werewolf') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    game.nightActions.werewolfKill = targetId;
+    cb({ success: true, message: 'Target selected' });
+
+    // Notify everyone that werewolves close eyes and proceed to witch phase
+    io.to(roomId).emit('phaseComplete', { message: 'Werewolves, close your eyes' });
+
+    setTimeout(() => startWitchPhase(roomId), 2000);
+  });
+
+  // Witch actions
+  socket.on('witchSave', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'witch') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    game.nightActions.witchSave = true;
+    cb({ success: true, message: 'Player saved' });
+  });
+
+  socket.on('witchPoison', ({ roomId, targetId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'witch') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    game.nightActions.witchPoison = targetId;
+    cb({ success: true, message: 'Player poisoned' });
+  });
+
+  socket.on('witchComplete', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'witch') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    // Notify everyone that witch closes eyes and proceed to seer phase
+    io.to(roomId).emit('phaseComplete', { message: 'Witch, close your eyes' });
+
+    setTimeout(() => startSeerPhase(roomId), 2000);
+    cb({ success: true });
+  });
+
+  // Seer action
+  socket.on('seerCheck', ({ roomId, targetId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'seer') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    const targetPlayer = game.players[targetId];
+    const isWerewolf = targetPlayer.role === 'werewolf';
+
+    game.nightActions.seerCheck = targetId;
+    game.nightActions.seerResult = isWerewolf ? 'werewolf' : 'good man';
+
+    // Show result to seer
+    io.to(socket.id).emit('seerResult', {
+      targetName: targetPlayer.name,
+      result: game.nightActions.seerResult
+    });
+
+    cb({ success: true, message: 'Check complete' });
+
+    // Notify everyone that seer closes eyes and proceed to day phase
+    setTimeout(() => {
+      io.to(roomId).emit('phaseComplete', { message: 'Seer, close your eyes' });
+      setTimeout(() => startDayPhase(roomId), 2000);
+    }, 3000);
+  });
+
+  // Host checks last night status
+  socket.on('checkLastNight', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || socket.id !== game.hostId) {
+      return cb({ success: false, message: 'Only host can check status' });
+    }
+
+    const deaths = game.dayResults.deaths;
+    let message;
+
+    if (deaths.length === 0) {
+      message = 'Last night was a peaceful night';
+    } else {
+      const deadPlayers = deaths.map(id => game.players[id].name);
+      message = `Players who died last night: ${deadPlayers.join(', ')}`;
+    }
+
+    cb({ success: true, message });
   });
 
   socket.on('disconnect', () => {
@@ -250,6 +363,119 @@ io.on('connection', (socket) => {
     delete hostConfigs[socket.id];
   });
 });
+
+// Night Phase Functions
+function startNightPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  // Announce night begins
+  io.to(roomId).emit('nightPhaseStarted', { message: 'Everyone, close your eyes' });
+
+  // Start werewolf phase after a delay
+  setTimeout(() => {
+    startWerewolfPhase(roomId);
+  }, 3000);
+}
+
+function startWerewolfPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  const werewolves = Object.entries(game.players).filter(([id, player]) => player.role === 'werewolf');
+
+  if (werewolves.length > 0) {
+    // Send audio message to ALL players
+    io.to(roomId).emit('werewolfPhaseAudio', {
+      message: 'Werewolves, open your eyes. Choose a player to kill.'
+    });
+
+    // Send UI only to werewolves
+    werewolves.forEach(([id]) => {
+      io.to(id).emit('werewolfPhaseUI', {
+        players: Object.values(game.players).map(p => ({ id: Object.keys(game.players).find(key => game.players[key] === p), name: p.name, seat: p.seat }))
+      });
+    });
+  } else {
+    // No werewolves, skip to witch phase
+    setTimeout(() => startWitchPhase(roomId), 2000);
+  }
+}
+
+function startWitchPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  const witches = Object.entries(game.players).filter(([id, player]) => player.role === 'witch');
+
+  if (witches.length > 0) {
+    // Send audio message to ALL players
+    io.to(roomId).emit('witchPhaseAudio', {
+      message: 'Witch, open your eyes'
+    });
+
+    // Send UI only to witch
+    witches.forEach(([id]) => {
+      io.to(id).emit('witchPhaseUI', {
+        killedPlayer: game.nightActions.werewolfKill,
+        players: Object.values(game.players).map(p => ({ id: Object.keys(game.players).find(key => game.players[key] === p), name: p.name, seat: p.seat }))
+      });
+    });
+  } else {
+    // No witch, skip to seer phase
+    setTimeout(() => startSeerPhase(roomId), 2000);
+  }
+}
+
+function startSeerPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  const seers = Object.entries(game.players).filter(([id, player]) => player.role === 'seer');
+
+  if (seers.length > 0) {
+    // Send audio message to ALL players
+    io.to(roomId).emit('seerPhaseAudio', {
+      message: 'Seer, open your eyes. Choose a player to check.'
+    });
+
+    // Send UI only to seer
+    seers.forEach(([id]) => {
+      io.to(id).emit('seerPhaseUI', {
+        players: Object.values(game.players).map(p => ({ id: Object.keys(game.players).find(key => game.players[key] === p), name: p.name, seat: p.seat }))
+      });
+    });
+  } else {
+    // No seer, go to day phase
+    setTimeout(() => startDayPhase(roomId), 2000);
+  }
+}
+
+function startDayPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  // Calculate who died this night
+  let deaths = [];
+
+  if (game.nightActions.werewolfKill && !game.nightActions.witchSave) {
+    deaths.push(game.nightActions.werewolfKill);
+  }
+
+  if (game.nightActions.witchPoison) {
+    deaths.push(game.nightActions.witchPoison);
+  }
+
+  game.dayResults.deaths = deaths;
+  game.phase = 'day';
+
+  // Announce day begins
+  io.to(roomId).emit('dayPhaseStarted', {
+    message: 'Everyone, open your eyes',
+    deaths: deaths
+  });
+}
+
 
 app.use(express.static('public'));
 
