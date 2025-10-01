@@ -92,6 +92,66 @@
       background-color: #28a745;
     }
 
+    /* Game phase seat states */
+    .seat.selectable {
+      border-color: #ffc107;
+      background-color: #fff3cd;
+      cursor: pointer;
+    }
+
+    .seat.selectable:hover {
+      border-color: #ff8800;
+      background-color: #ffe69c;
+    }
+
+    .seat.selected {
+      border-color: #dc3545;
+      background-color: #f8d7da;
+      color: #721c24;
+      font-weight: bold;
+    }
+
+    .seat.dead {
+      background-color: #6c757d;
+      color: white;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
+    /* Game phase UI */
+    .game-status {
+      background-color: #e9ecef;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px 0;
+      text-align: center;
+    }
+
+    .game-status.night {
+      background-color: #1a1a2e;
+      color: white;
+    }
+
+    .game-status.day {
+      background-color: #fff3cd;
+      color: #856404;
+    }
+
+    .phase-info {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+
+    .action-controls {
+      margin: 20px 0;
+      text-align: center;
+    }
+
+    .action-controls .button {
+      margin: 5px;
+    }
+
     .seat-number {
       font-weight: bold;
       font-size: 18px;
@@ -139,6 +199,26 @@
     .role-display {
       text-align: center;
       padding: 40px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .role-image {
+      width: 200px;
+      height: 200px;
+      border-radius: 15px;
+      border: 3px solid #007bff;
+      object-fit: cover;
+      margin: 20px auto;
+      display: block;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+      transition: transform 0.3s ease;
+    }
+
+    .role-image:hover {
+      transform: scale(1.05);
     }
 
     .role-name {
@@ -333,6 +413,12 @@
   <div id="lobby" class="page">
     <h2>🏠 Game Lobby</h2>
 
+    <!-- Game Status (appears during game) -->
+    <div id="gameStatus" class="game-status" style="display: none;">
+      <div class="phase-info" id="phaseInfo">Game Starting...</div>
+      <div id="phaseInstructions"></div>
+    </div>
+
     <div id="gameInfo" class="status">
       <div><strong>Room Code:</strong> <span id="displayRoomCode"></span></div>
       <div><strong>Total Players:</strong> <span id="displayTotalPlayers"></span></div>
@@ -340,14 +426,29 @@
       <div><strong>Roles:</strong> <span id="roleStatusText" class="role-status">Not assigned</span></div>
     </div>
 
-    <h3>Choose Your Seat</h3>
+    <h3 id="lobbyTitle">Choose Your Seat</h3>
     <div id="seatingArea" class="seating-area">
       <!-- Seats will be dynamically generated -->
+    </div>
+
+    <!-- Game Phase Action Controls -->
+    <div id="actionControls" class="action-controls" style="display: none;">
+      <div id="actionMessage" style="margin-bottom: 15px; font-weight: bold;"></div>
+      <button id="confirmSelection" class="button success" style="display: none;" onclick="confirmSelection()">Confirm
+        Selection</button>
+      <button id="witchSaveBtn" class="button" style="display: none;" onclick="witchSave()">Save Player</button>
+      <button id="witchPoisonBtn" class="button" style="display: none;" onclick="witchPoison()">Use Poison</button>
+      <button id="witchSkipBtn" class="button" style="display: none;" onclick="skipWitchAction()">Skip</button>
+      <button id="witchCompleteBtn" class="button" style="display: none;"
+        onclick="completeWitchAction()">Complete</button>
+      <div id="actionResult" style="margin-top: 15px; padding: 10px; border-radius: 5px; display: none;"></div>
     </div>
 
     <div id="gameControls">
       <button id="startGameBtn" class="button success" onclick="startGame()" disabled>Start Game</button>
       <button id="seeRoleBtn" class="button" onclick="showRolePage()" style="display: none;">See Your Role</button>
+      <button id="checkNightStatusBtn" class="button" onclick="checkLastNight()" style="display: none;">Check Last Night
+        Status</button>
       <button class="button" onclick="showLandingPage()">Leave Game</button>
     </div>
 
@@ -358,6 +459,7 @@
   <div id="role" class="page">
     <div class="role-display">
       <h2>🎭 Your Role</h2>
+      <img id="roleImage" class="role-image" src="" alt="Role Image" style="display: none;">
       <div class="role-name" id="roleDisplay">Loading...</div>
       <div id="roleDescription"></div>
       <button class="button" onclick="showLobbyPage()">Back to Game</button>
@@ -441,11 +543,19 @@
 
     function showLandingPage() {
       showPage('landing');
-      if (currentRoom) {
-        socket.disconnect();
-        socket.connect();
-        currentRoom = null;
-        isHost = false;
+    }
+
+    function showActionResult(message, type = 'success') {
+      const resultDiv = document.getElementById('actionResult');
+      resultDiv.innerHTML = message;
+      resultDiv.style.display = 'block';
+
+      if (type === 'error') {
+        resultDiv.style.backgroundColor = '#f8d7da';
+        resultDiv.style.color = '#721c24';
+      } else {
+        resultDiv.style.backgroundColor = '#d4edda';
+        resultDiv.style.color = '#155724';
       }
     }
 
@@ -465,8 +575,35 @@
           currentRole = response.role;
           document.getElementById('roleDisplay').textContent = response.role.toUpperCase();
           document.getElementById('roleDescription').textContent = roleDescriptions[response.role] || '';
+
+          // Show role image
+          const roleImage = document.getElementById('roleImage');
+          const imagePath = getRoleImagePath(response.role);
+          if (imagePath) {
+            roleImage.src = imagePath;
+            roleImage.alt = `${response.role} role image`;
+            roleImage.style.display = 'block';
+          } else {
+            roleImage.style.display = 'none';
+          }
         }
       });
+    }
+
+    // Function to get the correct image path for each role
+    function getRoleImagePath(role) {
+      const roleImageMap = {
+        'werewolf': '/images/werewolf.jpg',
+        'villager': '/images/villager.jpg',
+        'seer': '/images/sear.jpg', // Note: the file is named 'sear.jpg'
+        'witch': '/images/witch.jpg',
+        'hunter': '/images/hunter.jpg',
+        'fool': '/images/fool.jpg',
+        'guard': '/images/guard.jpg',
+        'cupid': '/images/cupid.jpg' // Now using the actual cupid image
+      };
+
+      return roleImageMap[role] || null;
     }
 
     // Configuration
@@ -494,8 +631,7 @@
       const totalRoles = werewolves + villagers + specialRoles;
 
       if (totalRoles !== totalPlayers) {
-        document.getElementById('roleValidation').textContent =
-          `Total roles (${totalRoles}) must equal total players (${totalPlayers})`;
+        document.getElementById('roleValidation').textContent = getText('totalRolesMustEqual', totalRoles, totalPlayers);
         document.getElementById('roleValidation').style.display = 'block';
         return false;
       }
@@ -555,12 +691,12 @@
       const roomCode = document.getElementById('roomCode').value.trim().toUpperCase();
 
       if (!name) {
-        showMessage('landingMessage', 'Please enter your name', 'error');
+        showMessage('landingMessage', getText('pleaseEnterName'), 'error');
         return;
       }
 
       if (!roomCode) {
-        showMessage('landingMessage', 'Please enter room code', 'error');
+        showMessage('landingMessage', getText('pleaseEnterRoomCode'), 'error');
         return;
       }
 
@@ -578,6 +714,9 @@
     }
 
     // Seating
+    // Game phase state
+    let gameStarted = false;
+
     function createSeatingArea(totalPlayers) {
       const seatingArea = document.getElementById('seatingArea');
       seatingArea.innerHTML = '';
@@ -587,12 +726,25 @@
         seat.className = 'seat';
         seat.setAttribute('data-seat', i);
         seat.innerHTML = `
-          <div class="seat-number">Seat ${i}</div>
+          <div class="seat-number">${getText('seat')} ${i}</div>
           <div class="seat-player" id="seat-${i}-player"></div>
         `;
 
-        seat.onclick = () => chooseSeat(i);
+        seat.onclick = () => handleSeatClick(i);
         seatingArea.appendChild(seat);
+      }
+    }
+
+    function handleSeatClick(seatId) {
+      if (gameStarted && currentPhase) {
+        // During game phase - handle player targeting
+        const seat = document.querySelector(`[data-seat="${seatId}"]`);
+        if (seat && seat.classList.contains('selectable')) {
+          selectSeatForAction(seatId);
+        }
+      } else {
+        // During lobby phase - handle seat selection
+        chooseSeat(seatId);
       }
     }
 
@@ -649,8 +801,11 @@
       document.getElementById('totalPlayerCount').textContent = config.totalPlayers;
       createSeatingArea(config.totalPlayers);
 
-      // Store the game language for audio
+      // Store the game language for audio and UI
       gameLanguage = config.language || 'en';
+
+      // Update all UI text based on selected language
+      updateUILanguage();
 
       // If we received seats data before the seating area was created, apply it now
       if (pendingSeats) {
@@ -674,8 +829,8 @@
       document.getElementById('seatedCount').textContent = status.filled;
 
       if (isHost) {
-        // Enable start game button only when all seats filled AND roles assigned
-        document.getElementById('startGameBtn').disabled = !(status.allFilled && status.rolesAssigned);
+        // TESTING: Enable start game button when at least 1 player is seated AND roles assigned
+        document.getElementById('startGameBtn').disabled = !(status.filled >= 1 && status.rolesAssigned);
       }
     });
 
@@ -683,17 +838,18 @@
     socket.on('roleAssigned', (role) => {
       currentRole = role;
       document.getElementById('seeRoleBtn').style.display = 'inline-block';
-      showMessage('lobbyMessage', 'Your role has been assigned! Click "See Your Role" to view it.', 'success');
+      showMessage('lobbyMessage', getText('roleAssigned'), 'success');
     });
 
     // Notify all players when roles are assigned
     socket.on('rolesAssigned', (data) => {
-      document.getElementById('roleStatusText').textContent = 'Assigned ✅';
+      document.getElementById('roleStatusText').textContent = getText('assigned');
       document.getElementById('roleStatusText').className = 'role-status assigned';
-      showMessage('lobbyMessage', data.message, 'success');
+      showMessage('lobbyMessage', getText('allRolesAssigned'), 'success');
     });
 
     socket.on('gameStarted', (data) => {
+      gameStarted = true; // Set game started flag
       showMessage('lobbyMessage', `Game officially started! Phase: ${data.phase}`, 'success');
       // You can add additional game phase UI updates here
     });
@@ -710,6 +866,357 @@
     let currentPhase = null;
     let witchActions = { saved: false, poisoned: false };
     let gameLanguage = 'en'; // Default to English
+
+    // Language translations for UI
+    const uiTexts = {
+      en: {
+        // Main titles
+        werewolvesGame: "🐺 Werewolves Game",
+        gameConfiguration: "⚙️ Game Configuration",
+        gameLobby: "🏠 Game Lobby",
+        yourRole: "🎭 Your Role",
+        gameInProgress: "🎮 Game in Progress",
+
+        // Landing page
+        joinGame: "Join Game",
+        hostGame: "Host Game",
+        enterYourName: "Enter your name",
+        enterRoomCode: "Enter room code",
+        configureCreateGame: "Configure & Create Game",
+
+        // Configuration page
+        gameLanguage: "Game Language:",
+        totalPlayers: "Total Players:",
+        numberOfWerewolves: "Number of Werewolves:",
+        numberOfVillagers: "Number of Villagers:",
+        specialRoles: "Special Roles:",
+        createRoom: "Create Room",
+        back: "Back",
+
+        // Special role names
+        seer: "🔮 Seer",
+        witch: "🧙‍♀️ Witch",
+        hunter: "🏹 Hunter",
+        fool: "🃏 Fool",
+        guard: "🛡️ Guard",
+        cupid: "💘 Cupid",
+
+        // Lobby page
+        roomCode: "Room Code:",
+        seatedPlayers: "Seated Players:",
+        roles: "Roles:",
+        chooseYourSeat: "Choose Your Seat",
+        startGame: "Start Game",
+        seeYourRole: "See Your Role",
+        leaveGame: "Leave Game",
+        notAssigned: "Not assigned",
+        assigned: "Assigned ✅",
+
+        // Seat labels
+        seat: "Seat",
+
+        // Game page
+        nightTimeInstructions: "🌙 Night Time - Listen for Instructions",
+        werewolvesTurn: "🐺 Werewolves Turn",
+        witchTurn: "🧙‍♀️ Witch Turn",
+        seerTurn: "🔮 Seer Turn",
+        hunterTurn: "🏹 Hunter Turn",
+        closeYourEyes: "👁️ Close Your Eyes",
+
+        // Action titles
+        choosePlayerToKill: "Choose a player to kill:",
+        choosePlayerToCheck: "Choose a player to check:",
+        witchActions: "Witch actions:",
+        wasKilledSaveThem: "was killed. Save them?",
+        poisonNotification: "POISON NOTIFICATION",
+
+        // Buttons
+        confirm: "Confirm",
+        savePlayer: "Save Player",
+        usePoison: "Use Poison",
+        skip: "Skip",
+        complete: "Complete",
+        checkLastNightStatus: "Check Last Night Status",
+        seeMyRole: "See My Role",
+        backToLobby: "Back to Lobby",
+        backToGame: "Back to Game",
+
+        // Messages
+        gameStarting: "Game Starting...",
+        playerSaved: "Player saved!",
+        playerPoisoned: "Player poisoned!",
+        pleaseSelectPlayer: "Please select a player to poison",
+        cannotSaveYourself: "You cannot save yourself!",
+        poisonedGunDisabled: "You have been poisoned! Your gun is disabled and you cannot use it during the day.",
+
+        // Validation messages
+        pleaseEnterName: "Please enter your name",
+        pleaseEnterRoomCode: "Please enter room code",
+        totalRolesMustEqual: "Total roles ({0}) must equal total players ({1})",
+
+        // Status messages
+        joinedSuccessfully: "Joined successfully!",
+        roleAssigned: "Your role has been assigned! Click \"See Your Role\" to view it.",
+        allRolesAssigned: "All players are seated and roles assigned!",
+        hostDisconnected: "Host disconnected. Game ended.",
+      },
+      zh: {
+        // Main titles
+        werewolvesGame: "🐺 狼人杀游戏",
+        gameConfiguration: "⚙️ 游戏配置",
+        gameLobby: "🏠 游戏大厅",
+        yourRole: "🎭 你的身份",
+        gameInProgress: "🎮 游戏进行中",
+
+        // Landing page
+        joinGame: "加入游戏",
+        hostGame: "创建游戏",
+        enterYourName: "请输入你的姓名",
+        enterRoomCode: "请输入房间代码",
+        configureCreateGame: "配置并创建游戏",
+
+        // Configuration page
+        gameLanguage: "游戏语言:",
+        totalPlayers: "总玩家数:",
+        numberOfWerewolves: "狼人数量:",
+        numberOfVillagers: "村民数量:",
+        specialRoles: "特殊身份:",
+        createRoom: "创建房间",
+        back: "返回",
+
+        // Special role names
+        seer: "🔮 预言家",
+        witch: "🧙‍♀️ 女巫",
+        hunter: "🏹 猎人",
+        fool: "🃏 白痴",
+        guard: "🛡️ 守卫",
+        cupid: "💘 丘比特",
+
+        // Lobby page
+        roomCode: "房间代码:",
+        seatedPlayers: "已就座玩家:",
+        roles: "身份:",
+        chooseYourSeat: "选择你的座位",
+        startGame: "开始游戏",
+        seeYourRole: "查看你的身份",
+        leaveGame: "离开游戏",
+        notAssigned: "未分配",
+        assigned: "已分配 ✅",
+
+        // Seat labels
+        seat: "座位",
+
+        // Game page
+        nightTimeInstructions: "🌙 夜晚时间 - 请听从指示",
+        werewolvesTurn: "🐺 狼人回合",
+        witchTurn: "🧙‍♀️ 女巫回合",
+        seerTurn: "🔮 预言家回合",
+        hunterTurn: "🏹 猎人回合",
+        closeYourEyes: "👁️ 请闭上你的眼睛",
+
+        // Action titles
+        choosePlayerToKill: "选择一个玩家杀死:",
+        choosePlayerToCheck: "选择一个玩家查验:",
+        witchActions: "女巫行动:",
+        wasKilledSaveThem: "被杀死了。要救他们吗?",
+        poisonNotification: "中毒通知",
+
+        // Buttons
+        confirm: "确认",
+        savePlayer: "救治玩家",
+        usePoison: "使用毒药",
+        skip: "跳过",
+        complete: "完成",
+        checkLastNightStatus: "查看昨夜状态",
+        seeMyRole: "查看我的身份",
+        backToLobby: "返回大厅",
+        backToGame: "返回游戏",
+
+        // Messages
+        gameStarting: "游戏开始中...",
+        playerSaved: "玩家已被救治!",
+        playerPoisoned: "玩家已被下毒!",
+        pleaseSelectPlayer: "请选择一个玩家下毒",
+        cannotSaveYourself: "你不能救自己!",
+        poisonedGunDisabled: "你已被下毒！你的枪被禁用，白天无法使用。",
+
+        // Validation messages
+        pleaseEnterName: "请输入你的姓名",
+        pleaseEnterRoomCode: "请输入房间代码",
+        totalRolesMustEqual: "总身份数 ({0}) 必须等于总玩家数 ({1})",
+
+        // Status messages
+        joinedSuccessfully: "成功加入!",
+        roleAssigned: "你的身份已分配！点击\"查看你的身份\"来查看。",
+        allRolesAssigned: "所有玩家已就座并分配身份！",
+        hostDisconnected: "房主已断开连接。游戏结束。",
+      }
+    };
+
+    // Function to get localized text
+    function getText(key, ...args) {
+      let text = uiTexts[gameLanguage]?.[key] || uiTexts['en'][key] || key;
+      // Replace placeholders {0}, {1}, etc. with arguments
+      args.forEach((arg, index) => {
+        text = text.replace(`{${index}}`, arg);
+      });
+      return text;
+    }
+
+    // Function to update all UI text based on current language
+    function updateUILanguage() {
+      // Helper function to safely update element text
+      function safeUpdateText(selector, textKey) {
+        const element = document.querySelector(selector);
+        if (element) {
+          element.textContent = getText(textKey);
+        }
+      }
+
+      function safeUpdatePlaceholder(selector, textKey) {
+        const element = document.querySelector(selector);
+        if (element) {
+          element.placeholder = getText(textKey);
+        }
+      }
+
+      // Main page titles
+      safeUpdateText('#landing h1', 'werewolvesGame');
+      safeUpdateText('#configure h2', 'gameConfiguration');
+      safeUpdateText('#lobby h2', 'gameLobby');
+      safeUpdateText('#role h2', 'yourRole');
+      safeUpdateText('#game h2', 'gameInProgress');
+
+      // Landing page
+      safeUpdateText('#landing h3:first-of-type', 'joinGame');
+      safeUpdateText('#landing h3:last-of-type', 'hostGame');
+      safeUpdatePlaceholder('#playerName', 'enterYourName');
+      safeUpdatePlaceholder('#roomCode', 'enterRoomCode');
+      safeUpdateText('#landing button:first-of-type', 'joinGame');
+      safeUpdateText('#landing button.success', 'configureCreateGame');
+
+      // Configuration page labels
+      safeUpdateText('label[for="gameLanguage"]', 'gameLanguage');
+      safeUpdateText('label[for="totalPlayers"]', 'totalPlayers');
+      safeUpdateText('label[for="numWerewolves"]', 'numberOfWerewolves');
+      safeUpdateText('label[for="numVillagers"]', 'numberOfVillagers');
+      safeUpdateText('.config-form label:nth-of-type(5)', 'specialRoles');
+
+      // Update special role checkboxes
+      updateSpecialRoleLabels();
+
+      // Configuration page buttons
+      safeUpdateText('.config-form button[type="submit"]', 'createRoom');
+      safeUpdateText('.config-form button[type="button"]', 'back');
+
+      // Lobby page
+      const gameInfoLabels = document.querySelectorAll('#gameInfo div strong');
+      if (gameInfoLabels.length >= 4) {
+        gameInfoLabels[0].textContent = getText('roomCode');
+        gameInfoLabels[1].textContent = getText('totalPlayers');
+        gameInfoLabels[2].textContent = getText('seatedPlayers');
+        gameInfoLabels[3].textContent = getText('roles');
+      }
+
+      safeUpdateText('#lobby h3', 'chooseYourSeat');
+
+      // Lobby buttons
+      const startGameBtn = document.getElementById('startGameBtn');
+      if (startGameBtn) startGameBtn.textContent = getText('startGame');
+
+      const seeRoleBtn = document.getElementById('seeRoleBtn');
+      if (seeRoleBtn) seeRoleBtn.textContent = getText('seeYourRole');
+
+      safeUpdateText('#lobby button:last-of-type', 'leaveGame');
+
+      // Update role status text
+      const roleStatusElement = document.getElementById('roleStatusText');
+      if (roleStatusElement) {
+        if (roleStatusElement.classList.contains('assigned')) {
+          roleStatusElement.textContent = getText('assigned');
+        } else {
+          roleStatusElement.textContent = getText('notAssigned');
+        }
+      }
+
+      // Role descriptions
+      updateRoleDescriptions();
+
+      // Game page buttons
+      const confirmBtn = document.getElementById('confirmBtn');
+      if (confirmBtn) confirmBtn.textContent = getText('confirm');
+
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn) saveBtn.textContent = getText('savePlayer');
+
+      const poisonBtn = document.getElementById('poisonBtn');
+      if (poisonBtn) poisonBtn.textContent = getText('usePoison');
+
+      const skipBtn = document.getElementById('skipBtn');
+      if (skipBtn) skipBtn.textContent = getText('skip');
+
+      const completeBtn = document.getElementById('completeBtn');
+      if (completeBtn) completeBtn.textContent = getText('complete');
+
+      const checkNightBtn = document.getElementById('checkNightBtn');
+      if (checkNightBtn) checkNightBtn.textContent = getText('checkLastNightStatus');
+
+      safeUpdateText('#game button:nth-last-child(2)', 'seeMyRole');
+      safeUpdateText('#game button:last-child', 'backToLobby');
+      safeUpdateText('#role button', 'backToGame');
+
+      // Update seat labels if they exist
+      updateSeatLabels();
+    }
+
+    function updateSpecialRoleLabels() {
+      const specialRoleCheckboxes = document.querySelectorAll('.special-roles label');
+      const roleKeys = ['seer', 'witch', 'hunter', 'fool', 'guard', 'cupid'];
+
+      specialRoleCheckboxes.forEach((label, index) => {
+        if (index < roleKeys.length) {
+          const checkbox = label.querySelector('input');
+          const roleText = getText(roleKeys[index]);
+          label.innerHTML = `${checkbox.outerHTML} ${roleText}`;
+        }
+      });
+    }
+
+    function updateRoleDescriptions() {
+      const roleDescriptionsLang = {
+        en: {
+          'werewolf': '🐺 You are a Werewolf! Work with other werewolves to eliminate villagers during the night.',
+          'villager': '👨‍🌾 You are a Villager! Find and eliminate the werewolves during the day.',
+          'seer': '🔮 You are the Seer! You can check one player\'s role each night.',
+          'witch': '🧙‍♀️ You are the Witch! You have a healing potion and a poison potion.',
+          'hunter': '🏹 You are the Hunter! When you die, you can choose to eliminate another player.',
+          'fool': '🃏 You are the Fool! You win if the villagers mistakenly vote you out.',
+          'guard': '🛡️ You are the Guard! You can protect one player each night.',
+          'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.'
+        },
+        zh: {
+          'werewolf': '🐺 你是狼人！与其他狼人合作，在夜晚消灭村民。',
+          'villager': '👨‍🌾 你是村民！在白天找出并消灭狼人。',
+          'seer': '🔮 你是预言家！每晚可以查验一个玩家的身份。',
+          'witch': '🧙‍♀️ 你是女巫！你有一瓶解药和一瓶毒药。',
+          'hunter': '🏹 你是猎人！当你死亡时，可以选择消灭另一个玩家。',
+          'fool': '🃏 你是白痴！如果村民错误地投票淘汰你，你就获胜。',
+          'guard': '🛡️ 你是守卫！每晚可以保护一个玩家。',
+          'cupid': '💘 你是丘比特！第一晚选择两个玩家相爱。'
+        }
+      };
+
+      // Update global roleDescriptions object
+      Object.assign(roleDescriptions, roleDescriptionsLang[gameLanguage] || roleDescriptionsLang['en']);
+    }
+
+    function updateSeatLabels() {
+      const seats = document.querySelectorAll('.seat-number');
+      seats.forEach((seatElement, index) => {
+        const seatNumber = index + 1;
+        seatElement.textContent = `${getText('seat')} ${seatNumber}`;
+      });
+    }
 
     // Audio/Speech functionality
     let speechSynthesis = window.speechSynthesis;
@@ -803,7 +1310,6 @@
         socket.emit('werewolfKill', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
           if (response.success) {
             hideActionArea();
-            showMessage('phaseMessage', response.message + ' - Werewolves, close your eyes', 'success');
           }
         });
       } else if (currentPhase === 'seer') {
@@ -817,44 +1323,54 @@
       selectedPlayerId = null;
     }
 
+    // Lobby-based witch functions
     function witchSave() {
       socket.emit('witchSave', { roomId: currentRoom }, (response) => {
         if (response.success) {
           witchActions.saved = true;
-          document.getElementById('saveBtn').style.display = 'none';
-          document.getElementById('resultDisplay').innerHTML = 'Player saved!';
-          document.getElementById('resultDisplay').classList.remove('hidden');
+          document.getElementById('witchSaveBtn').style.display = 'none';
+          showActionResult(getText('playerSaved'));
+        } else {
+          showActionResult(response.message, 'error');
         }
       });
     }
 
     function witchPoison() {
       if (!selectedPlayerId) {
-        alert('Please select a player to poison');
+        alert(getText('pleaseSelectPlayer'));
         return;
       }
 
       socket.emit('witchPoison', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
         if (response.success) {
           witchActions.poisoned = true;
-          document.getElementById('poisonBtn').style.display = 'none';
-          document.getElementById('resultDisplay').innerHTML = 'Player poisoned!';
-          document.getElementById('resultDisplay').classList.remove('hidden');
+          document.getElementById('witchPoisonBtn').style.display = 'none';
+          showActionResult(getText('playerPoisoned'));
+
+          // Clear seat selection after poison
+          resetSeatStates();
+          selectedPlayerId = null;
+          document.getElementById('confirmSelection').style.display = 'none';
         }
       });
+    }
+
+    function skipWitchAction() {
+      completeWitchAction();
     }
 
     function completeWitchAction() {
       socket.emit('witchComplete', { roomId: currentRoom }, (response) => {
         if (response.success) {
-          hideActionArea();
+          hideGameActionUI();
         }
       });
     }
 
     function skipAction() {
       if (currentPhase === 'witch') {
-        completeWitchAction();
+        skipWitchAction();
       }
     }
 
@@ -882,106 +1398,291 @@
       selectedPlayerId = null;
     }
 
-    // Night Phase Event Listeners (with Audio)
+    // Game Phase Functions for Lobby-based UI
+    function resetSeatStates() {
+      document.querySelectorAll('.seat').forEach(seat => {
+        seat.classList.remove('selectable', 'selected', 'dead');
+      });
+    }
+
+    function makeSeatSelectable(seatId) {
+      const seat = document.querySelector(`[data-seat="${seatId}"]`);
+      if (seat && seat.classList.contains('occupied')) {
+        seat.classList.add('selectable');
+      }
+    }
+
+    function selectSeat(seatId) {
+      // Clear previous selections
+      document.querySelectorAll('.seat').forEach(seat => {
+        seat.classList.remove('selected');
+      });
+
+      // Select the clicked seat
+      const seat = document.querySelector(`[data-seat="${seatId}"]`);
+      if (seat) {
+        seat.classList.add('selected');
+        selectedPlayerId = getSeatPlayerId(seatId);
+        document.getElementById('confirmSelection').style.display = 'inline-block';
+      }
+    }
+
+    function getSeatPlayerId(seatId) {
+      // Get player ID from seat ID - you'll need to track this mapping
+      // For now, we'll use the seat ID as player ID (this should be improved)
+      const seatElement = document.querySelector(`[data-seat="${seatId}"]`);
+      return seatElement ? seatElement.getAttribute('data-player-id') : null;
+    }
+
+    function confirmSelection() {
+      if (!selectedPlayerId) return;
+
+      if (currentPhase === 'werewolf') {
+        socket.emit('werewolfKill', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
+          if (response.success) {
+            hideGameActionUI();
+            showActionResult(getText('playerSelected'));
+          }
+        });
+      } else if (currentPhase === 'seer') {
+        socket.emit('seerCheck', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
+          if (response.success) {
+            document.getElementById('confirmSelection').style.display = 'none';
+            // Don't show "Checking player..." - wait for actual result
+          }
+        });
+      }
+
+      selectedPlayerId = null;
+      resetSeatStates();
+    }
+
+    function hideGameActionUI() {
+      document.getElementById('actionControls').style.display = 'none';
+      resetSeatStates();
+    }
+
+    function showActionResult(message, type = 'success') {
+      const resultDiv = document.getElementById('actionResult');
+      resultDiv.innerHTML = message;
+      resultDiv.style.display = 'block';
+
+      if (type === 'error') {
+        resultDiv.style.backgroundColor = '#f8d7da';
+        resultDiv.style.color = '#721c24';
+      } else {
+        resultDiv.style.backgroundColor = '#d4edda';
+        resultDiv.style.color = '#155724';
+      }
+    }
+
+    function showGameStatus(phase, message, instructions = '') {
+      const gameStatus = document.getElementById('gameStatus');
+      const phaseInfo = document.getElementById('phaseInfo');
+      const phaseInstructions = document.getElementById('phaseInstructions');
+
+      gameStatus.style.display = 'block';
+      gameStatus.className = `game-status ${phase}`;
+      phaseInfo.textContent = message;
+      phaseInstructions.textContent = instructions;
+
+      // Update lobby title
+      document.getElementById('lobbyTitle').textContent = message;
+    }
+
+    // Night Phase Event Listeners (modified for lobby-based UI)
     socket.on('nightPhaseStarted', (data) => {
-      showGamePage();
-      document.getElementById('phaseMessage').textContent = '🌙 Night Time - Listen for Instructions';
-      document.getElementById('currentPhase').className = 'night-phase';
-      hideActionArea();
-      document.getElementById('hostControls').classList.add('hidden');
+      showGameStatus('night', '🌙 Night Time', 'Listen for instructions and close your eyes');
+      hideGameActionUI();
+
+      // Show host night status check button
+      if (isHost) {
+        document.getElementById('checkNightStatusBtn').style.display = 'inline-block';
+      }
 
       // Play audio announcement
       speakText(data.message);
     });
 
-    // Werewolf Phase - Separated audio and UI
+    // Werewolf Phase - Lobby-based UI
     socket.on('werewolfPhaseAudio', (data) => {
       currentPhase = 'werewolf';
-      document.getElementById('phaseMessage').textContent = '🐺 Werewolves Turn';
+      showGameStatus('night', '🐺 Werewolves Turn', 'Werewolves, open your eyes and choose a player to kill');
       // Everyone hears this audio
       speakText(data.message);
     });
 
     socket.on('werewolfPhaseUI', (data) => {
-      // Only werewolves see this UI
+      // Only werewolves see this UI - show action controls and make seats selectable
       setTimeout(() => {
-        document.getElementById('actionTitle').textContent = 'Choose a player to kill:';
-        createPlayerList(data.players);
-        document.getElementById('actionArea').classList.remove('hidden');
-        document.getElementById('playerSelection').classList.remove('hidden');
-        document.getElementById('actionButtons').classList.remove('hidden');
-        document.getElementById('confirmBtn').style.display = 'none'; // Will show when player selected
+        // Hide all previous phase buttons first
+        hideAllPhaseButtons();
+
+        document.getElementById('actionMessage').textContent = getText('choosePlayerToKill');
+        document.getElementById('actionControls').style.display = 'block';
+
+        // Make all occupied seats selectable for werewolves
+        data.players.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            // Store player ID in seat element for selection
+            seat.setAttribute('data-player-id', player.id);
+            // Override click handler for game phase
+            seat.onclick = () => selectSeatForAction(player.seat, player.id);
+          }
+        });
       }, 2000); // Delay to let audio finish
     });
 
-    // Witch Phase - Separated audio and UI
+    // Function to handle seat selection during game phases
+    function selectSeatForAction(seatId, playerId) {
+      // Clear previous selections
+      document.querySelectorAll('.seat').forEach(seat => {
+        seat.classList.remove('selected');
+      });
+
+      // Select the clicked seat
+      const seat = document.querySelector(`[data-seat="${seatId}"]`);
+      if (seat && seat.classList.contains('selectable')) {
+        seat.classList.add('selected');
+        selectedPlayerId = playerId;
+        document.getElementById('confirmSelection').style.display = 'inline-block';
+      }
+    }
+
+    // Listen for werewolf UI hide event
+    socket.on('hideWerewolfUI', () => {
+      if (currentPhase === 'werewolf') {
+        hideGameActionUI();
+        showActionResult('Waiting for other actions...');
+      }
+    });
+
+    // Witch Phase - Lobby-based UI
     socket.on('witchPhaseAudio', (data) => {
       currentPhase = 'witch';
-      document.getElementById('phaseMessage').textContent = '🧙‍♀️ Witch Turn';
+      showGameStatus('night', '🧙‍♀️ Witch Turn', 'Witch, open your eyes');
       // Everyone hears this audio
       speakText(data.message);
     });
 
     socket.on('witchPhaseUI', (data) => {
-      // Only witch sees this UI
+      // Only witch sees this UI - show lobby-based action controls
       setTimeout(() => {
-        let actionTitle = 'Witch actions:';
+        let actionMessage = getText('witchActions');
         if (data.killedPlayer) {
           const killedPlayerName = data.players.find(p => p.id === data.killedPlayer)?.name || 'Unknown';
-          actionTitle += ` ${killedPlayerName} was killed. Save them?`;
+          actionMessage += ` ${killedPlayerName} ${getText('wasKilledSaveThem')}`;
         }
-        document.getElementById('actionTitle').textContent = actionTitle;
-
-        createPlayerList(data.players);
-        document.getElementById('actionArea').classList.remove('hidden');
-        document.getElementById('playerSelection').classList.remove('hidden');
-        document.getElementById('actionButtons').classList.remove('hidden');
+        document.getElementById('actionMessage').textContent = actionMessage;
+        document.getElementById('actionControls').style.display = 'block';
 
         // Show witch-specific buttons
         if (data.killedPlayer) {
-          document.getElementById('saveBtn').style.display = 'inline-block';
+          document.getElementById('witchSaveBtn').style.display = 'inline-block';
         }
-        document.getElementById('poisonBtn').style.display = 'inline-block';
-        document.getElementById('skipBtn').style.display = 'inline-block';
-        document.getElementById('completeBtn').style.display = 'inline-block';
-        document.getElementById('confirmBtn').style.display = 'none';
+        document.getElementById('witchPoisonBtn').style.display = 'inline-block';
+        document.getElementById('witchSkipBtn').style.display = 'inline-block';
+        document.getElementById('witchCompleteBtn').style.display = 'inline-block';
+
+        // Make all occupied seats selectable for witch to poison
+        data.players.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            seat.setAttribute('data-player-id', player.id);
+            seat.onclick = () => selectSeatForAction(player.seat, player.id);
+          }
+        });
       }, 2000); // Delay to let audio finish
     });
 
-    // Seer Phase - Separated audio and UI
+    // Seer Phase - Lobby-based UI
     socket.on('seerPhaseAudio', (data) => {
       currentPhase = 'seer';
-      document.getElementById('phaseMessage').textContent = '🔮 Seer Turn';
+      showGameStatus('night', '🔮 Seer Turn', 'Seer, open your eyes and choose a player to check');
       // Everyone hears this audio
       speakText(data.message);
     });
 
     socket.on('seerPhaseUI', (data) => {
-      // Only seer sees this UI
+      // Only seer sees this UI - show lobby-based action controls
       setTimeout(() => {
-        document.getElementById('actionTitle').textContent = 'Choose a player to check:';
-        createPlayerList(data.players);
-        document.getElementById('actionArea').classList.remove('hidden');
-        document.getElementById('playerSelection').classList.remove('hidden');
-        document.getElementById('actionButtons').classList.remove('hidden');
-        document.getElementById('confirmBtn').style.display = 'none'; // Will show when player selected
+        // Hide all previous phase buttons first
+        hideAllPhaseButtons();
+
+        document.getElementById('actionMessage').textContent = getText('choosePlayerToCheck');
+        document.getElementById('actionControls').style.display = 'block';
+
+        // Make all occupied seats selectable for seer to check
+        data.players.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            seat.setAttribute('data-player-id', player.id);
+            seat.onclick = () => selectSeatForAction(player.seat, player.id);
+          }
+        });
       }, 2000); // Delay to let audio finish
     });
 
+    // Helper function to hide all phase-specific buttons
+    function hideAllPhaseButtons() {
+      // Hide witch buttons
+      document.getElementById('witchSaveBtn').style.display = 'none';
+      document.getElementById('witchPoisonBtn').style.display = 'none';
+      document.getElementById('witchSkipBtn').style.display = 'none';
+      document.getElementById('witchCompleteBtn').style.display = 'none';
+
+      // Hide confirm selection button
+      document.getElementById('confirmSelection').style.display = 'none';
+
+      // Hide action result
+      document.getElementById('actionResult').style.display = 'none';
+    }
+
+    // Seer result handling
     socket.on('seerResult', (data) => {
-      document.getElementById('resultDisplay').innerHTML =
-        `${data.targetName} is a <strong>${data.result}</strong>`;
-      document.getElementById('resultDisplay').classList.remove('hidden');
+      // Show the result to the seer
+      showActionResult(`${data.targetName} is a <strong>${data.result}</strong>`);
+
+      // Show a confirmation button for seer to proceed
+      document.getElementById('confirmSelection').textContent = 'Confirm & Continue';
+      document.getElementById('confirmSelection').style.display = 'inline-block';
+      document.getElementById('confirmSelection').onclick = () => {
+        // Proceed to next phase when seer confirms
+        socket.emit('seerComplete', { roomId: currentRoom });
+        hideGameActionUI();
+      };
 
       // Seer result is shown silently (no audio) so other players don't hear
     });
 
     socket.on('phaseComplete', (data) => {
-      document.getElementById('phaseMessage').textContent = '👁️ Close Your Eyes';
-      hideActionArea();
+      showGameStatus('night', '👁️ Close Your Eyes', data.message);
+      hideGameActionUI();
 
       // Play audio for phase completion
       speakText(data.message);
+    });
+
+    // Hunter Phase Event Listeners
+    socket.on('hunterPhaseAudio', (data) => {
+      document.getElementById('phaseMessage').textContent = '🏹 Hunter Turn';
+      // Everyone hears this audio
+      speakText(data.message);
+    });
+
+    socket.on('hunterPoisonNotification', (data) => {
+      // Only poisoned hunter sees this notification
+      setTimeout(() => {
+        document.getElementById('actionTitle').textContent = 'POISON NOTIFICATION';
+        document.getElementById('resultDisplay').innerHTML =
+          `<div style="color: #dc3545; font-weight: bold; font-size: 18px;">${data.message}</div>`;
+        document.getElementById('resultDisplay').classList.remove('hidden');
+        document.getElementById('actionArea').classList.remove('hidden');
+      }, 2000); // Delay to let audio finish
     });
 
     socket.on('dayPhaseStarted', (data) => {
