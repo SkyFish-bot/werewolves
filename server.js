@@ -542,57 +542,6 @@ io.on('connection', (socket) => {
     }, 1000);
   });
 
-  // New witch workflow - Start poison selection
-  socket.on('witchStartPoison', ({ roomId }, cb) => {
-    const game = games[roomId];
-    if (!game || game.players[socket.id].role !== 'witch') {
-      return cb({ success: false, message: 'Invalid action' });
-    }
-
-    // Tell witch to enter poison selection mode
-    io.to(socket.id).emit('witchPoisonMode', {
-      players: Object.values(game.players).map(p => ({
-        id: Object.keys(game.players).find(key => game.players[key] === p),
-        name: p.name,
-        seat: p.seat
-      }))
-    });
-
-    cb({ success: true, message: 'Select a player to poison' });
-  });
-
-  // New witch workflow - Confirm poison
-  socket.on('witchConfirmPoison', ({ roomId, targetId }, cb) => {
-    const game = games[roomId];
-    if (!game || game.players[socket.id].role !== 'witch') {
-      return cb({ success: false, message: 'Invalid action' });
-    }
-
-    // Apply poison and end witch turn
-    game.nightActions.witchPoison = targetId;
-    game.nightPhaseActions.witch = true;
-
-    const targetName = game.players[targetId].name;
-    cb({ success: true, message: `${targetName} has been poisoned!` });
-
-    // End witch turn
-    setTimeout(() => {
-      io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
-      setTimeout(() => checkNightPhaseComplete(roomId), 2000);
-    }, 1000);
-  });
-
-  // New witch workflow - Cancel poison selection
-  socket.on('witchCancelPoison', ({ roomId }, cb) => {
-    const game = games[roomId];
-    if (!game || game.players[socket.id].role !== 'witch') {
-      return cb({ success: false, message: 'Invalid action' });
-    }
-
-    // Return to main witch decision mode
-    cb({ success: true, message: 'Poison selection cancelled' });
-  });
-
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
 
