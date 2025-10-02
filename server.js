@@ -21,6 +21,7 @@ const messages = {
     seerClose: 'Seer, close your eyes',
     hunterPhase: 'Hunter, open your eyes',
     hunterClose: 'Hunter, close your eyes',
+    detectorElection: 'Everyone, open your eyes, raise your hand for detector election',
     dayStart: 'Everyone, open your eyes',
     peacefulNight: 'Last night was a peaceful night',
     deathAnnouncement: 'Players who died last night'
@@ -35,6 +36,7 @@ const messages = {
     seerClose: '预言家请闭眼',
     hunterPhase: '猎人请睁眼',
     hunterClose: '猎人请闭眼',
+    detectorElection: '请大家睁眼，举手进行探测器选举',
     dayStart: '天亮了，请大家睁眼',
     peacefulNight: '昨夜是平安夜',
     deathAnnouncement: '昨夜死亡的玩家'
@@ -319,6 +321,10 @@ io.on('connection', (socket) => {
     }
 
     game.nightActions.werewolfKill = targetId;
+
+    // Mark werewolf action as complete
+    game.nightPhaseActions.werewolf = true;
+
     cb({ success: true, message: 'Target selected' });
 
     // Hide UI for ALL werewolves
@@ -327,10 +333,10 @@ io.on('connection', (socket) => {
       io.to(id).emit('hideWerewolfUI');
     });
 
-    // Notify everyone that werewolves close eyes and proceed to witch phase
+    // Notify everyone that werewolves close eyes and check for next phase
     io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'werewolfClose') });
 
-    setTimeout(() => startWitchPhase(roomId), 2000);
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
   });
 
   // Witch actions - Enhanced: Cannot save themselves
@@ -350,6 +356,8 @@ io.on('connection', (socket) => {
 
     // Automatically end witch turn after saving someone
     setTimeout(() => {
+      // Mark witch action as complete
+      game.nightPhaseActions.witch = true;
       io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
       setTimeout(() => startSeerPhase(roomId), 2000);
     }, 1000);
@@ -364,7 +372,15 @@ io.on('connection', (socket) => {
     game.nightActions.witchPoison = targetId;
     cb({ success: true, message: 'Player poisoned' });
 
-    // Don't auto-complete - wait for witch to confirm/complete their turn
+    // Automatically complete witch turn after using poison
+    setTimeout(() => {
+      // Mark witch action as complete
+      game.nightPhaseActions.witch = true;
+
+      // Notify everyone that witch closes eyes and check for next phase
+      io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
+      setTimeout(() => checkNightPhaseComplete(roomId), 2000);
+    }, 1000);
   });
 
   socket.on('witchComplete', ({ roomId }, cb) => {
@@ -373,10 +389,13 @@ io.on('connection', (socket) => {
       return cb({ success: false, message: 'Invalid action' });
     }
 
-    // Notify everyone that witch closes eyes and proceed to seer phase
+    // Mark witch action as complete
+    game.nightPhaseActions.witch = true;
+
+    // Notify everyone that witch closes eyes and check for next phase
     io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
 
-    setTimeout(() => startSeerPhase(roomId), 2000);
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
     cb({ success: true });
   });
 
@@ -408,14 +427,36 @@ io.on('connection', (socket) => {
   socket.on('seerComplete', ({ roomId }, cb) => {
     const game = games[roomId];
     if (!game || game.players[socket.id].role !== 'seer') {
-      return cb({ success: false, message: 'Invalid action' });
+      if (cb) return cb({ success: false, message: 'Invalid action' });
+      return;
     }
 
-    // Notify everyone that seer closes eyes and proceed to hunter check phase
-    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'seerClose') });
-    setTimeout(() => startHunterCheckPhase(roomId), 2000);
+    // Mark seer action as complete
+    game.nightPhaseActions.seer = true;
 
-    cb({ success: true });
+    // Notify everyone that seer closes eyes and check for next phase
+    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'seerClose') });
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
+
+    if (cb) cb({ success: true });
+  });
+
+  // Hunter confirms their status and wants to proceed
+  socket.on('hunterComplete', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'hunter') {
+      if (cb) return cb({ success: false, message: 'Invalid action' });
+      return;
+    }
+
+    // Mark hunter action as complete
+    game.nightPhaseActions.hunter = true;
+
+    // Notify everyone that hunter closes eyes and check for next phase
+    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'hunterClose') || 'Hunter, close your eyes' });
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
+
+    if (cb) cb({ success: true });
   });
 
   // Host checks last night status
@@ -437,6 +478,119 @@ io.on('connection', (socket) => {
     }
 
     cb({ success: true, message });
+  });
+
+  // Host shuffles roles (resets game and redistributes roles)
+  socket.on('shuffleRoles', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || socket.id !== game.hostId) {
+      return cb({ success: false, message: 'Only host can shuffle roles' });
+    }
+
+    // Reset game state to lobby phase
+    game.phase = 'lobby';
+    game.nightActions = {};
+    game.dayResults = {};
+    game.playerStates = {};
+
+    // Clear existing roles
+    game.roles = {};
+    game.rolePool = null; // This will force role pool recreation
+
+    // Reassign roles to all seated players
+    Object.keys(game.players).forEach(playerId => {
+      const player = game.players[playerId];
+      if (player.seat) { // Only reassign roles to seated players
+        const newRole = assignRoleToPlayer(game, playerId);
+        // Notify the player of their new role
+        io.to(playerId).emit('roleAssigned', newRole);
+      }
+    });
+
+    // Notify all players that roles have been shuffled
+    io.to(roomId).emit('rolesShuffled', {
+      message: 'Roles have been shuffled! Check your new role.'
+    });
+
+    // Update seats status
+    const filledSeats = game.seats.filter(s => s.player).length;
+    io.to(roomId).emit('seatsStatus', {
+      filled: filledSeats,
+      total: game.config.totalPlayers,
+      allFilled: filledSeats === game.config.totalPlayers,
+      rolesAssigned: Object.keys(game.roles).length > 0
+    });
+
+    cb({ success: true, message: 'Roles shuffled successfully!' });
+  });
+
+  // New clearer witch workflow handlers
+  socket.on('witchSkip', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'witch') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    // Mark witch action as complete and end turn
+    game.nightPhaseActions.witch = true;
+    cb({ success: true, message: 'Witch skipped their turn' });
+
+    // End witch turn
+    setTimeout(() => {
+      io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
+      setTimeout(() => checkNightPhaseComplete(roomId), 2000);
+    }, 1000);
+  });
+
+  // New witch workflow - Start poison selection
+  socket.on('witchStartPoison', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'witch') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    // Tell witch to enter poison selection mode
+    io.to(socket.id).emit('witchPoisonMode', {
+      players: Object.values(game.players).map(p => ({
+        id: Object.keys(game.players).find(key => game.players[key] === p),
+        name: p.name,
+        seat: p.seat
+      }))
+    });
+
+    cb({ success: true, message: 'Select a player to poison' });
+  });
+
+  // New witch workflow - Confirm poison
+  socket.on('witchConfirmPoison', ({ roomId, targetId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'witch') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    // Apply poison and end witch turn
+    game.nightActions.witchPoison = targetId;
+    game.nightPhaseActions.witch = true;
+
+    const targetName = game.players[targetId].name;
+    cb({ success: true, message: `${targetName} has been poisoned!` });
+
+    // End witch turn
+    setTimeout(() => {
+      io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
+      setTimeout(() => checkNightPhaseComplete(roomId), 2000);
+    }, 1000);
+  });
+
+  // New witch workflow - Cancel poison selection
+  socket.on('witchCancelPoison', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'witch') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    // Return to main witch decision mode
+    cb({ success: true, message: 'Poison selection cancelled' });
   });
 
   socket.on('disconnect', () => {
@@ -489,6 +643,14 @@ function startNightPhase(roomId) {
   const game = games[roomId];
   if (!game) return;
 
+  // Initialize night phase tracking
+  game.nightPhaseActions = {
+    werewolf: false,
+    witch: false,
+    seer: false,
+    hunter: false
+  };
+
   // Announce night begins
   io.to(roomId).emit('nightPhaseStarted', { message: getMessage(roomId, 'nightStart') });
 
@@ -496,6 +658,102 @@ function startNightPhase(roomId) {
   setTimeout(() => {
     startWerewolfPhase(roomId);
   }, 3000);
+}
+
+// Function to check if all special characters have completed their actions
+function checkNightPhaseComplete(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  console.log(`[${roomId}] Night phase status:`, game.nightPhaseActions);
+
+  // Always check werewolf completion first
+  if (!game.nightPhaseActions.werewolf) {
+    console.log(`[${roomId}] Werewolf has not completed yet`);
+    return;
+  }
+
+  // Get which special characters exist in the game (excluding werewolf since we checked it above)
+  const specialCharacters = getSpecialCharactersInGame(game);
+  console.log(`[${roomId}] Special characters in game:`, specialCharacters);
+
+  // Check if all existing special characters have completed their actions
+  let allCompleted = true;
+  for (const character of specialCharacters) {
+    if (!game.nightPhaseActions[character]) {
+      allCompleted = false;
+      break;
+    }
+  }
+
+  console.log(`[${roomId}] All special characters completed: ${allCompleted}`);
+
+  if (allCompleted) {
+    // All special characters have acted, proceed to detector election
+    console.log(`[${roomId}] All special characters completed, starting detector election`);
+    setTimeout(() => startDetectorElectionPhase(roomId), 2000);
+  } else {
+    // Find the next character that needs to act
+    const nextCharacter = getNextCharacterToAct(game, specialCharacters);
+    if (nextCharacter) {
+      console.log(`[${roomId}] Next character to act: ${nextCharacter}`);
+      setTimeout(() => startCharacterPhase(roomId, nextCharacter), 2000);
+    }
+  }
+}
+
+// Function to get all special characters that exist in the game
+function getSpecialCharactersInGame(game) {
+  const characters = [];
+  const players = Object.values(game.players);
+
+  // Include werewolf first (werewolf always acts first)
+  characters.push('werewolf'); // Always include werewolf since it's tracked in nightPhaseActions
+
+  // Check for witch
+  if (players.some(p => p.role === 'witch')) {
+    characters.push('witch');
+  }
+
+  // Check for seer
+  if (players.some(p => p.role === 'seer')) {
+    characters.push('seer');
+  }
+
+  // Check for hunter
+  if (players.some(p => p.role === 'hunter')) {
+    characters.push('hunter');
+  }
+
+  return characters;
+}
+
+// Function to get the next character that needs to act
+function getNextCharacterToAct(game, specialCharacters) {
+  const actionOrder = ['witch', 'seer', 'hunter'];
+
+  for (const character of actionOrder) {
+    if (specialCharacters.includes(character) && !game.nightPhaseActions[character]) {
+      return character;
+    }
+  }
+
+  return null;
+}
+
+// Function to start a specific character's phase
+function startCharacterPhase(roomId, character) {
+  switch (character) {
+    case 'witch':
+      startWitchPhase(roomId);
+      break;
+    case 'seer':
+      startSeerPhase(roomId);
+      break;
+    case 'hunter':
+      startHunterCheckPhase(roomId);
+      break;
+  }
 }
 
 function startWerewolfPhase(roomId) {
@@ -517,10 +775,11 @@ function startWerewolfPhase(roomId) {
       });
     });
   } else {
-    // No werewolves, automatically skip to witch phase
-    console.log(`[${roomId}] No werewolves present, skipping werewolf phase`);
+    // No werewolves, automatically mark werewolf phase as complete
+    console.log(`[${roomId}] No werewolves present, marking werewolf phase as complete`);
+    game.nightPhaseActions.werewolf = true;
     io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'werewolfClose') });
-    setTimeout(() => startWitchPhase(roomId), 2000);
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
   }
 }
 
@@ -552,16 +811,18 @@ function startWitchPhase(roomId) {
     } else {
       // Only fake witches, automatically complete witch phase
       console.log(`[${roomId}] Only fake witches present, auto-completing witch phase`);
+      game.nightPhaseActions.witch = true;
       setTimeout(() => {
         io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
-        setTimeout(() => startSeerPhase(roomId), 2000);
+        setTimeout(() => checkNightPhaseComplete(roomId), 2000);
       }, 3000);
     }
   } else {
-    // No witch, automatically skip to seer phase
-    console.log(`[${roomId}] No witch present, skipping witch phase`);
+    // No witch, automatically mark witch phase as complete
+    console.log(`[${roomId}] No witch present, marking witch phase as complete`);
+    game.nightPhaseActions.witch = true;
     io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'witchClose') });
-    setTimeout(() => startSeerPhase(roomId), 2000);
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
   }
 }
 
@@ -588,16 +849,18 @@ function startSeerPhase(roomId) {
     } else {
       // Only fake seers, automatically complete seer phase
       console.log(`[${roomId}] Only fake seers present, auto-completing seer phase`);
+      game.nightPhaseActions.seer = true;
       setTimeout(() => {
         io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'seerClose') });
-        setTimeout(() => startHunterCheckPhase(roomId), 2000);
+        setTimeout(() => checkNightPhaseComplete(roomId), 2000);
       }, 3000);
     }
   } else {
-    // No seer, automatically skip to hunter check phase
-    console.log(`[${roomId}] No seer present, skipping seer phase`);
+    // No seer, automatically mark seer phase as complete
+    console.log(`[${roomId}] No seer present, marking seer phase as complete`);
+    game.nightPhaseActions.seer = true;
     io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'seerClose') });
-    setTimeout(() => startHunterCheckPhase(roomId), 2000);
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
   }
 }
 
@@ -606,44 +869,66 @@ function startHunterCheckPhase(roomId) {
   if (!game) return;
 
   const hunters = Object.entries(game.players).filter(([id, player]) => player.role === 'hunter');
+  const realHunters = hunters.filter(([id, player]) => !player.isFake);
 
   if (hunters.length > 0) {
-    // Check if any hunter is poisoned
-    const poisonedHunters = hunters.filter(([id]) => game.nightActions.witchPoison === id);
+    // Send audio message to ALL players
+    io.to(roomId).emit('hunterPhaseAudio', {
+      message: getMessage(roomId, 'hunterPhase') || 'Hunter, open your eyes'
+    });
 
-    if (poisonedHunters.length > 0) {
-      // Send audio message to ALL players
-      io.to(roomId).emit('hunterPhaseAudio', {
-        message: getMessage(roomId, 'hunterPhase') || 'Hunter, open your eyes'
-      });
+    if (realHunters.length > 0) {
+      // Send UI to ALL real hunters (both poisoned and not poisoned)
+      realHunters.forEach(([id]) => {
+        const isPoisoned = game.nightActions.witchPoison === id;
 
-      // Send poison notification only to poisoned hunters
-      poisonedHunters.forEach(([id]) => {
-        // Mark hunter as poisoned in player states
-        if (!game.playerStates[id]) {
-          game.playerStates[id] = {};
+        // Mark hunter as poisoned in player states if they are poisoned
+        if (isPoisoned) {
+          if (!game.playerStates[id]) {
+            game.playerStates[id] = {};
+          }
+          game.playerStates[id].poisoned = true;
         }
-        game.playerStates[id].poisoned = true;
 
-        io.to(id).emit('hunterPoisonNotification', {
-          message: 'You have been poisoned! Your gun is disabled and you cannot use it during the day.'
+        io.to(id).emit('hunterPhaseUI', {
+          isPoisoned: isPoisoned,
+          message: isPoisoned
+            ? 'You have been poisoned! Your gun is disabled and you cannot use it during the day.'
+            : 'You can use your gun during the day if needed.'
         });
       });
-
-      // Wait a moment then proceed to day phase
+    } else {
+      // Only fake hunters, automatically complete hunter phase
+      console.log(`[${roomId}] Only fake hunters present, auto-completing hunter phase`);
+      game.nightPhaseActions.hunter = true;
       setTimeout(() => {
         io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'hunterClose') || 'Hunter, close your eyes' });
-        setTimeout(() => startDayPhase(roomId), 2000);
-      }, 4000);
-    } else {
-      // No poisoned hunters, go straight to day phase
-      setTimeout(() => startDayPhase(roomId), 1000);
+        setTimeout(() => checkNightPhaseComplete(roomId), 2000);
+      }, 3000);
     }
   } else {
-    // No hunters, automatically skip hunter phase
-    console.log(`[${roomId}] No hunter present, skipping hunter phase`);
-    setTimeout(() => startDayPhase(roomId), 1000);
+    // No hunters, automatically mark hunter phase as complete
+    console.log(`[${roomId}] No hunter present, marking hunter phase as complete`);
+    game.nightPhaseActions.hunter = true;
+    // Still announce the hunter phase close message for consistency
+    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'hunterClose') || 'Hunter, close your eyes' });
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
   }
+}
+
+function startDetectorElectionPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  // Send detector election announcement to ALL players
+  io.to(roomId).emit('detectorElectionPhase', {
+    message: getMessage(roomId, 'detectorElection')
+  });
+
+  // Wait for the detector election announcement to complete, then proceed to day phase
+  setTimeout(() => {
+    startDayPhase(roomId);
+  }, 3000);
 }
 
 function startDayPhase(roomId) {

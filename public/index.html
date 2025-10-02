@@ -436,19 +436,25 @@
       <div id="actionMessage" style="margin-bottom: 15px; font-weight: bold;"></div>
       <button id="confirmSelection" class="button success" style="display: none;" onclick="confirmSelection()">Confirm
         Selection</button>
+      <button id="seerContinueBtn" class="button success" style="display: none;" onclick="seerContinue()">Confirm &
+        Continue</button>
       <button id="witchSaveBtn" class="button" style="display: none;" onclick="witchSave()">Save Player</button>
       <button id="witchPoisonBtn" class="button" style="display: none;" onclick="witchPoison()">Use Poison</button>
       <button id="witchSkipBtn" class="button" style="display: none;" onclick="skipWitchAction()">Skip</button>
-      <button id="witchCompleteBtn" class="button" style="display: none;"
-        onclick="completeWitchAction()">Complete</button>
+      <button id="hunterContinueBtn" class="button success" style="display: none;" onclick="hunterContinue()">Confirm &
+        Continue</button>
       <div id="actionResult" style="margin-top: 15px; padding: 10px; border-radius: 5px; display: none;"></div>
     </div>
 
     <div id="gameControls">
       <button id="startGameBtn" class="button success" onclick="startGame()" disabled>Start Game</button>
+      <button id="shuffleRolesBtn" class="button" onclick="shuffleRoles()"
+        style="display: none; background-color: #17a2b8;">🔀 Shuffle Roles</button>
       <button id="seeRoleBtn" class="button" onclick="showRolePage()" style="display: none;">See Your Role</button>
       <button id="checkNightStatusBtn" class="button" onclick="checkLastNight()" style="display: none;">Check Last Night
         Status</button>
+      <button id="testAudioBtn" class="button" onclick="testAudio()" style="background-color: #ffc107; color: #000;">🔊
+        Test Audio</button>
       <button class="button" onclick="showLandingPage()">Leave Game</button>
     </div>
 
@@ -786,6 +792,18 @@
       });
     }
 
+    function shuffleRoles() {
+      if (confirm('Are you sure you want to shuffle roles? This will reset the game and assign new roles to all players.')) {
+        socket.emit('shuffleRoles', { roomId: currentRoom }, (response) => {
+          if (response.success) {
+            showMessage('lobbyMessage', response.message, 'success');
+          } else {
+            showMessage('lobbyMessage', response.message, 'error');
+          }
+        });
+      }
+    }
+
     // Utility Functions
     function showMessage(elementId, message, type) {
       const element = document.getElementById(elementId);
@@ -831,6 +849,14 @@
       if (isHost) {
         // TESTING: Enable start game button when at least 1 player is seated AND roles assigned
         document.getElementById('startGameBtn').disabled = !(status.filled >= 1 && status.rolesAssigned);
+
+        // Show shuffle roles button only to host and when roles are assigned
+        const shuffleBtn = document.getElementById('shuffleRolesBtn');
+        if (status.rolesAssigned) {
+          shuffleBtn.style.display = 'inline-block';
+        } else {
+          shuffleBtn.style.display = 'none';
+        }
       }
     });
 
@@ -846,6 +872,19 @@
       document.getElementById('roleStatusText').textContent = getText('assigned');
       document.getElementById('roleStatusText').className = 'role-status assigned';
       showMessage('lobbyMessage', getText('allRolesAssigned'), 'success');
+    });
+
+    // Handle roles shuffled event
+    socket.on('rolesShuffled', (data) => {
+      showMessage('lobbyMessage', data.message, 'success');
+      // Hide shuffle button briefly to prevent spam clicking
+      const shuffleBtn = document.getElementById('shuffleRolesBtn');
+      if (shuffleBtn) {
+        shuffleBtn.disabled = true;
+        setTimeout(() => {
+          shuffleBtn.disabled = false;
+        }, 2000);
+      }
     });
 
     socket.on('gameStarted', (data) => {
@@ -866,6 +905,7 @@
     let currentPhase = null;
     let witchActions = { saved: false, poisoned: false };
     let gameLanguage = 'en'; // Default to English
+    let currentPlayers = []; // Store current players data for game phases
 
     // Language translations for UI
     const uiTexts = {
@@ -1223,6 +1263,8 @@
     let isSpeaking = false;
 
     function speakText(text, callback) {
+      console.log('Attempting to speak:', text);
+
       if (!speechSynthesis) {
         console.log('Speech synthesis not supported');
         if (callback) callback();
@@ -1232,31 +1274,48 @@
       // Cancel any ongoing speech
       speechSynthesis.cancel();
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.8; // Slightly slower for clarity
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
+      // Wait a bit for cancel to complete
+      setTimeout(() => {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 0.8; // Slightly slower for clarity
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
 
-      // Set language based on game configuration
-      utterance.lang = gameLanguage === 'zh' ? 'zh-CN' : 'en-US';
+        // Set language based on game configuration
+        utterance.lang = gameLanguage === 'zh' ? 'zh-CN' : 'en-US';
 
-      utterance.onstart = () => {
-        isSpeaking = true;
-      };
+        utterance.onstart = () => {
+          console.log('Speech started:', text);
+          isSpeaking = true;
+        };
 
-      utterance.onend = () => {
-        isSpeaking = false;
-        if (callback) {
-          setTimeout(callback, 500); // Small delay after speech
+        utterance.onend = () => {
+          console.log('Speech ended:', text);
+          isSpeaking = false;
+          if (callback) {
+            setTimeout(callback, 500); // Small delay after speech
+          }
+        };
+
+        utterance.onerror = (event) => {
+          // Don't log "canceled" errors as they're expected when interrupting speech
+          if (event.error !== 'canceled') {
+            console.error('Speech error:', event);
+          } else {
+            console.log('Speech was canceled (expected)');
+          }
+          isSpeaking = false;
+          if (callback) callback();
+        };
+
+        try {
+          speechSynthesis.speak(utterance);
+          console.log('Speech utterance queued');
+        } catch (error) {
+          console.error('Error speaking:', error);
+          if (callback) callback();
         }
-      };
-
-      utterance.onerror = () => {
-        isSpeaking = false;
-        if (callback) callback();
-      };
-
-      speechSynthesis.speak(utterance);
+      }, 100);
     }
 
     function stopSpeech() {
@@ -1264,6 +1323,42 @@
         speechSynthesis.cancel();
         isSpeaking = false;
       }
+    }
+
+    // Audio test function
+    function testAudio() {
+      const testMessage = gameLanguage === 'zh' ? '测试音频功能正常工作' : 'Audio test is working';
+      console.log('Testing audio with message:', testMessage);
+
+      // Ensure user interaction enables audio
+      if (speechSynthesis.speaking) {
+        speechSynthesis.cancel();
+      }
+
+      // Wait a moment then try to speak
+      setTimeout(() => {
+        const utterance = new SpeechSynthesisUtterance(testMessage);
+        utterance.lang = gameLanguage === 'zh' ? 'zh-CN' : 'en-US';
+        utterance.rate = 0.8;
+        utterance.volume = 1.0;
+
+        utterance.onstart = () => {
+          console.log('✅ Audio started successfully!');
+          showMessage('lobbyMessage', 'Audio is working! 🔊', 'success');
+        };
+
+        utterance.onerror = (event) => {
+          console.error('❌ Audio error:', event);
+          showMessage('lobbyMessage', `Audio error: ${event.error}`, 'error');
+        };
+
+        utterance.onend = () => {
+          console.log('Audio test completed');
+        };
+
+        console.log('Starting direct speech synthesis...');
+        speechSynthesis.speak(utterance);
+      }, 100);
     }
 
     // Game Phase Functions
@@ -1337,23 +1432,18 @@
     }
 
     function witchPoison() {
-      if (!selectedPlayerId) {
-        alert(getText('pleaseSelectPlayer'));
-        return;
+      // Use the stored player data from when witch phase UI was received
+      if (currentPlayers && currentPlayers.length > 0) {
+        // Make all occupied seats selectable for witch to poison
+        currentPlayers.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            seat.setAttribute('data-player-id', player.id);
+            seat.onclick = () => selectSeatForAction(player.seat, player.id);
+          }
+        });
       }
-
-      socket.emit('witchPoison', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
-        if (response.success) {
-          witchActions.poisoned = true;
-          document.getElementById('witchPoisonBtn').style.display = 'none';
-          showActionResult(getText('playerPoisoned'));
-
-          // Clear seat selection after poison
-          resetSeatStates();
-          selectedPlayerId = null;
-          document.getElementById('confirmSelection').style.display = 'none';
-        }
-      });
     }
 
     function skipWitchAction() {
@@ -1435,7 +1525,10 @@
     }
 
     function confirmSelection() {
-      if (!selectedPlayerId) return;
+      if (!selectedPlayerId) {
+        alert(getText('pleaseSelectPlayer'));
+        return;
+      }
 
       if (currentPhase === 'werewolf') {
         socket.emit('werewolfKill', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
@@ -1449,6 +1542,20 @@
           if (response.success) {
             document.getElementById('confirmSelection').style.display = 'none';
             // Don't show "Checking player..." - wait for actual result
+          }
+        });
+      } else if (currentPhase === 'witch') {
+
+        socket.emit('witchPoison', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
+          if (response.success) {
+            witchActions.poisoned = true;
+            document.getElementById('witchPoisonBtn').style.display = 'none';
+            showActionResult(getText('playerPoisoned'));
+
+            // Clear seat selection after poison
+            resetSeatStates();
+            selectedPlayerId = null;
+            document.getElementById('confirmSelection').style.display = 'none';
           }
         });
       }
@@ -1568,6 +1675,9 @@
     });
 
     socket.on('witchPhaseUI', (data) => {
+      // Store current players data for witch actions
+      currentPlayers = data.players;
+
       // Only witch sees this UI - show lobby-based action controls
       setTimeout(() => {
         let actionMessage = getText('witchActions');
@@ -1584,17 +1694,6 @@
         }
         document.getElementById('witchPoisonBtn').style.display = 'inline-block';
         document.getElementById('witchSkipBtn').style.display = 'inline-block';
-        document.getElementById('witchCompleteBtn').style.display = 'inline-block';
-
-        // Make all occupied seats selectable for witch to poison
-        data.players.forEach(player => {
-          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
-          if (seat && seat.classList.contains('occupied')) {
-            seat.classList.add('selectable');
-            seat.setAttribute('data-player-id', player.id);
-            seat.onclick = () => selectSeatForAction(player.seat, player.id);
-          }
-        });
       }, 2000); // Delay to let audio finish
     });
 
@@ -1633,7 +1732,9 @@
       document.getElementById('witchSaveBtn').style.display = 'none';
       document.getElementById('witchPoisonBtn').style.display = 'none';
       document.getElementById('witchSkipBtn').style.display = 'none';
-      document.getElementById('witchCompleteBtn').style.display = 'none';
+
+      // Hide seer buttons
+      document.getElementById('seerContinueBtn').style.display = 'none';
 
       // Hide confirm selection button
       document.getElementById('confirmSelection').style.display = 'none';
@@ -1647,17 +1748,25 @@
       // Show the result to the seer
       showActionResult(`${data.targetName} is a <strong>${data.result}</strong>`);
 
-      // Show a confirmation button for seer to proceed
-      document.getElementById('confirmSelection').textContent = 'Confirm & Continue';
-      document.getElementById('confirmSelection').style.display = 'inline-block';
-      document.getElementById('confirmSelection').onclick = () => {
-        // Proceed to next phase when seer confirms
-        socket.emit('seerComplete', { roomId: currentRoom });
-        hideGameActionUI();
-      };
+      // Show the dedicated seer continue button
+      document.getElementById('seerContinueBtn').style.display = 'inline-block';
 
       // Seer result is shown silently (no audio) so other players don't hear
     });
+
+    // Function for seer to continue after seeing result
+    function seerContinue() {
+      socket.emit('seerComplete', { roomId: currentRoom });
+      hideGameActionUI();
+      document.getElementById('seerContinueBtn').style.display = 'none';
+    }
+
+    // Function for hunter to continue after seeing their status
+    function hunterContinue() {
+      socket.emit('hunterComplete', { roomId: currentRoom });
+      hideGameActionUI();
+      document.getElementById('hunterContinueBtn').style.display = 'none';
+    }
 
     socket.on('phaseComplete', (data) => {
       showGameStatus('night', '👁️ Close Your Eyes', data.message);
@@ -1667,21 +1776,48 @@
       speakText(data.message);
     });
 
+    // Detector Election Phase Event Listener
+    socket.on('detectorElectionPhase', (data) => {
+      showGameStatus('day', '🕵️ Detector Election', data.message);
+      hideGameActionUI();
+
+      // Play audio for detector election announcement
+      speakText(data.message);
+    });
+
     // Hunter Phase Event Listeners
     socket.on('hunterPhaseAudio', (data) => {
-      document.getElementById('phaseMessage').textContent = '🏹 Hunter Turn';
+      currentPhase = 'hunter';
+      showGameStatus('night', '🏹 Hunter Turn', 'Hunter, open your eyes');
       // Everyone hears this audio
       speakText(data.message);
     });
 
-    socket.on('hunterPoisonNotification', (data) => {
-      // Only poisoned hunter sees this notification
+    socket.on('hunterPhaseUI', (data) => {
+      // Only hunters see this UI - show them their status
       setTimeout(() => {
-        document.getElementById('actionTitle').textContent = 'POISON NOTIFICATION';
-        document.getElementById('resultDisplay').innerHTML =
-          `<div style="color: #dc3545; font-weight: bold; font-size: 18px;">${data.message}</div>`;
-        document.getElementById('resultDisplay').classList.remove('hidden');
-        document.getElementById('actionArea').classList.remove('hidden');
+        // Hide all previous phase buttons first
+        hideAllPhaseButtons();
+
+        document.getElementById('actionMessage').textContent = data.isPoisoned ?
+          getText('poisonNotification') : 'Hunter Status';
+        document.getElementById('actionControls').style.display = 'block';
+
+        // Show the message in the action result area
+        const resultDiv = document.getElementById('actionResult');
+        resultDiv.innerHTML = data.message;
+        resultDiv.style.display = 'block';
+
+        if (data.isPoisoned) {
+          resultDiv.style.backgroundColor = '#f8d7da';
+          resultDiv.style.color = '#721c24';
+        } else {
+          resultDiv.style.backgroundColor = '#d4edda';
+          resultDiv.style.color = '#155724';
+        }
+
+        // Show hunter continue button
+        document.getElementById('hunterContinueBtn').style.display = 'inline-block';
       }, 2000); // Delay to let audio finish
     });
 
