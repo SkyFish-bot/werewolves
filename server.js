@@ -13,6 +13,10 @@ const hostConfigs = {}; // Temporary storage for host configurations
 const messages = {
   en: {
     nightStart: 'Everyone, close your eyes',
+    cupidPhase: 'Cupid, open your eyes. Choose two players to be lovers.',
+    cupidClose: 'Cupid, close your eyes',
+    loversReveal: 'Everyone, open your eyes, check if you are selected as lovers',
+    loversClose: 'Everyone, close your eyes',
     werewolfPhase: 'Werewolves, open your eyes. Choose a player to kill.',
     werewolfClose: 'Werewolves, close your eyes',
     witchPhase: 'Witch, open your eyes',
@@ -28,6 +32,10 @@ const messages = {
   },
   zh: {
     nightStart: '天黑了，请大家闭眼',
+    cupidPhase: '丘比特请睁眼，请选择两个玩家成为恋人',
+    cupidClose: '丘比特请闭眼',
+    loversReveal: '请大家睁眼，看看自己是否被选为恋人',
+    loversClose: '请大家闭眼',
     werewolfPhase: '狼人请睁眼，请选择一个玩家杀死',
     werewolfClose: '狼人请闭眼',
     witchPhase: '女巫请睁眼',
@@ -313,6 +321,56 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Cupid action
+  socket.on('cupidSelect', ({ roomId, targetIds }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'cupid') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    if (!targetIds || targetIds.length !== 2) {
+      return cb({ success: false, message: 'Must select exactly 2 players' });
+    }
+
+    if (targetIds[0] === targetIds[1]) {
+      return cb({ success: false, message: 'Cannot select the same player twice' });
+    }
+
+    // Set the lovers
+    game.lovers = targetIds;
+
+    // Mark cupid action as complete
+    game.nightPhaseActions.cupid = true;
+
+    cb({ success: true, message: 'Lovers selected' });
+
+    // Notify that cupid is closing eyes
+    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'cupidClose') });
+
+    // Wait a moment, then reveal lovers
+    setTimeout(() => {
+      // Tell everyone to open eyes and check if they're lovers
+      io.to(roomId).emit('loversRevealPhase', { message: getMessage(roomId, 'loversReveal') });
+
+      // Send lover information to the selected players
+      targetIds.forEach(playerId => {
+        const otherLover = targetIds.find(id => id !== playerId);
+        const otherLoverName = game.players[otherLover]?.name || 'Unknown';
+        io.to(playerId).emit('loverAssigned', {
+          isLover: true,
+          partnerName: otherLoverName,
+          partnerId: otherLover
+        });
+      });
+
+      // Wait 10 seconds, then tell everyone to close eyes and continue to werewolf phase
+      setTimeout(() => {
+        io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'loversClose') });
+        setTimeout(() => startWerewolfPhase(roomId), 2000);
+      }, 10000);
+    }, 2000);
+  });
+
   // Werewolf action
   socket.on('werewolfKill', ({ roomId, targetId }, cb) => {
     const game = games[roomId];
@@ -594,18 +652,30 @@ function startNightPhase(roomId) {
 
   // Initialize night phase tracking
   game.nightPhaseActions = {
+    cupid: false,
     werewolf: false,
     witch: false,
     seer: false,
     hunter: false
   };
 
+  // Initialize lovers tracking
+  if (!game.lovers) {
+    game.lovers = [];
+  }
+
   // Announce night begins
   io.to(roomId).emit('nightPhaseStarted', { message: getMessage(roomId, 'nightStart') });
 
-  // Start werewolf phase after a delay
+  // Check if cupid exists and start cupid phase first, otherwise go to werewolf
   setTimeout(() => {
-    startWerewolfPhase(roomId);
+    const hasCupid = Object.values(game.players).some(p => p.role === 'cupid');
+    if (hasCupid) {
+      startCupidPhase(roomId);
+    } else {
+      game.nightPhaseActions.cupid = true; // Mark as complete if no cupid
+      startWerewolfPhase(roomId);
+    }
   }, 3000);
 }
 
@@ -656,7 +726,12 @@ function getSpecialCharactersInGame(game) {
   const characters = [];
   const players = Object.values(game.players);
 
-  // Include werewolf first (werewolf always acts first)
+  // Include cupid first (cupid acts before everyone)
+  if (players.some(p => p.role === 'cupid')) {
+    characters.push('cupid');
+  }
+
+  // Include werewolf (werewolf acts after cupid)
   characters.push('werewolf'); // Always include werewolf since it's tracked in nightPhaseActions
 
   // Check for witch
@@ -702,6 +777,44 @@ function startCharacterPhase(roomId, character) {
     case 'hunter':
       startHunterCheckPhase(roomId);
       break;
+  }
+}
+
+function startCupidPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  const cupids = Object.entries(game.players).filter(([id, player]) => player.role === 'cupid');
+  const realCupids = cupids.filter(([id, player]) => !player.isFake);
+
+  if (cupids.length > 0) {
+    // Send audio message to ALL players
+    io.to(roomId).emit('cupidPhaseAudio', {
+      message: getMessage(roomId, 'cupidPhase')
+    });
+
+    if (realCupids.length > 0) {
+      // Send UI only to real cupids
+      realCupids.forEach(([id]) => {
+        io.to(id).emit('cupidPhaseUI', {
+          players: Object.values(game.players).map(p => ({
+            id: Object.keys(game.players).find(key => game.players[key] === p),
+            name: p.name,
+            seat: p.seat
+          }))
+        });
+      });
+    } else {
+      // Only fake cupids, automatically complete cupid phase
+      console.log(`[${roomId}] Only fake cupids present, auto-completing cupid phase`);
+      game.nightPhaseActions.cupid = true;
+      setTimeout(() => startWerewolfPhase(roomId), 2000);
+    }
+  } else {
+    // No cupid, automatically mark cupid phase as complete
+    console.log(`[${roomId}] No cupid present, marking cupid phase as complete`);
+    game.nightPhaseActions.cupid = true;
+    setTimeout(() => startWerewolfPhase(roomId), 2000);
   }
 }
 
@@ -893,6 +1006,25 @@ function startDayPhase(roomId) {
 
   if (game.nightActions.witchPoison) {
     deaths.push(game.nightActions.witchPoison);
+  }
+
+  // Check for lover deaths - if one lover dies, the other also dies from heartbreak
+  if (game.lovers && game.lovers.length === 2) {
+    const [lover1, lover2] = game.lovers;
+
+    // Check if either lover is in the current deaths list
+    const lover1Died = deaths.includes(lover1);
+    const lover2Died = deaths.includes(lover2);
+
+    if (lover1Died && !lover2Died) {
+      // Lover 1 died, lover 2 dies from heartbreak
+      deaths.push(lover2);
+      console.log(`[${roomId}] Lover ${game.players[lover1]?.name} died, ${game.players[lover2]?.name} dies from heartbreak`);
+    } else if (lover2Died && !lover1Died) {
+      // Lover 2 died, lover 1 dies from heartbreak
+      deaths.push(lover1);
+      console.log(`[${roomId}] Lover ${game.players[lover2]?.name} died, ${game.players[lover1]?.name} dies from heartbreak`);
+    }
   }
 
   game.dayResults.deaths = deaths;

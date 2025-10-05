@@ -902,10 +902,13 @@
 
     // Game Phase Variables
     let selectedPlayerId = null;
+    let selectedPlayerIds = []; // For cupid selecting multiple players
     let currentPhase = null;
     let witchActions = { saved: false, poisoned: false };
     let gameLanguage = 'en'; // Default to English
     let currentPlayers = []; // Store current players data for game phases
+    let isLover = false; // Track if current player is a lover
+    let partnerName = null; // Store lover partner's name
 
     // Language translations for UI
     const uiTexts = {
@@ -1666,6 +1669,123 @@
       }
     });
 
+    // Cupid Phase Event Listeners
+    socket.on('cupidPhaseAudio', (data) => {
+      currentPhase = 'cupid';
+      showGameStatus('night', '💘 Cupid Turn', 'Cupid, open your eyes and choose two players to be lovers');
+      // Everyone hears this audio
+      speakText(data.message);
+    });
+
+    socket.on('cupidPhaseUI', (data) => {
+      // Only cupid sees this UI - show action controls
+      setTimeout(() => {
+        // Hide all previous phase buttons first
+        hideAllPhaseButtons();
+
+        document.getElementById('actionMessage').textContent = 'Choose 2 players to become lovers:';
+        document.getElementById('actionControls').style.display = 'block';
+
+        // Make all occupied seats selectable for cupid
+        data.players.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            seat.setAttribute('data-player-id', player.id);
+            seat.onclick = () => selectSeatForCupid(player.seat, player.id);
+          }
+        });
+
+        // Create and show cupid confirm button
+        const cupidConfirmBtn = document.createElement('button');
+        cupidConfirmBtn.id = 'cupidConfirmBtn';
+        cupidConfirmBtn.className = 'button success';
+        cupidConfirmBtn.textContent = 'Confirm and Continue';
+        cupidConfirmBtn.style.display = 'none';
+        cupidConfirmBtn.onclick = confirmCupidSelection;
+
+        const actionControls = document.getElementById('actionControls');
+        actionControls.appendChild(cupidConfirmBtn);
+
+      }, 2000); // Delay to let audio finish
+    });
+
+    // Function to handle cupid seat selection (allows multiple selections)
+    function selectSeatForCupid(seatId, playerId) {
+      const seat = document.querySelector(`[data-seat="${seatId}"]`);
+
+      if (seat && seat.classList.contains('selectable')) {
+        // Toggle selection
+        if (seat.classList.contains('selected')) {
+          // Deselect
+          seat.classList.remove('selected');
+          selectedPlayerIds = selectedPlayerIds.filter(id => id !== playerId);
+        } else {
+          // Select (max 2 players)
+          if (selectedPlayerIds.length < 2) {
+            seat.classList.add('selected');
+            selectedPlayerIds.push(playerId);
+          } else {
+            showActionResult('You can only select 2 players as lovers', 'error');
+            return;
+          }
+        }
+
+        // Update confirmation button visibility
+        const cupidConfirmBtn = document.getElementById('cupidConfirmBtn');
+        if (selectedPlayerIds.length === 2) {
+          cupidConfirmBtn.style.display = 'inline-block';
+        } else {
+          cupidConfirmBtn.style.display = 'none';
+        }
+
+        // Update action message
+        document.getElementById('actionMessage').textContent =
+          `Choose 2 players to become lovers: (${selectedPlayerIds.length}/2 selected)`;
+      }
+    }
+
+    // Function to confirm cupid's lover selection
+    function confirmCupidSelection() {
+      if (selectedPlayerIds.length !== 2) {
+        showActionResult('You must select exactly 2 players', 'error');
+        return;
+      }
+
+      socket.emit('cupidSelect', { roomId: currentRoom, targetIds: selectedPlayerIds }, (response) => {
+        if (response.success) {
+          hideGameActionUI();
+          showActionResult('Lovers selected! Waiting for next phase...');
+          selectedPlayerIds = [];
+        } else {
+          showActionResult(response.message, 'error');
+        }
+      });
+    }
+
+    // Listen for lovers reveal phase
+    socket.on('loversRevealPhase', (data) => {
+      showGameStatus('night', '💕 Lovers Reveal', data.message);
+      speakText(data.message);
+    });
+
+    // Handle lover assignment
+    socket.on('loverAssigned', (data) => {
+      if (data.isLover) {
+        isLover = true;
+        partnerName = data.partnerName;
+
+        // Show lover notification to the assigned player
+        showActionResult(`💕 You are now a lover! Your partner is: ${partnerName}`, 'success');
+
+        // You could also update the UI to show lover status permanently
+        const roleStatusElement = document.getElementById('roleStatusText');
+        if (roleStatusElement) {
+          roleStatusElement.innerHTML += ` 💕 (Lover: ${partnerName})`;
+        }
+      }
+    });
+
     // Witch Phase - Lobby-based UI
     socket.on('witchPhaseAudio', (data) => {
       currentPhase = 'witch';
@@ -1728,6 +1848,9 @@
 
     // Helper function to hide all phase-specific buttons
     function hideAllPhaseButtons() {
+      // Hide cupid buttons
+      document.getElementById('cupidConfirmBtn') && (document.getElementById('cupidConfirmBtn').style.display = 'none');
+
       // Hide witch buttons
       document.getElementById('witchSaveBtn').style.display = 'none';
       document.getElementById('witchPoisonBtn').style.display = 'none';
