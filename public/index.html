@@ -407,7 +407,10 @@
       <input id="numWerewolves" type="number" min="1" max="4" value="3">
 
       <label>Number of Villagers:</label>
-      <input id="numVillagers" type="number" min="1" max="8" value="6">
+      <input id="numVillagers" type="number" min="0" max="8" value="6">
+
+      <label>Number of Orphans:</label>
+      <input id="numOrphans" type="number" min="0" max="4" value="0">
 
       <label>Special Roles:</label>
       <div class="special-roles">
@@ -440,6 +443,8 @@
       <div><strong>Room Code:</strong> <span id="displayRoomCode"></span></div>
       <div><strong>Total Players:</strong> <span id="displayTotalPlayers"></span></div>
       <div><strong>Seated Players:</strong> <span id="seatedCount">0</span> / <span id="totalPlayerCount">0</span></div>
+      <div><strong>Werewolves:</strong> <span id="displayWerewolves">0</span> | <strong>Villagers:</strong> <span
+          id="displayVillagers">0</span> | <strong>Orphans:</strong> <span id="displayOrphans">0</span></div>
       <div><strong>Roles:</strong> <span id="roleStatusText" class="role-status">Not assigned</span></div>
     </div>
 
@@ -470,6 +475,8 @@
       <button id="seeRoleBtn" class="button" onclick="showRolePage()" style="display: none;">See Your Role</button>
       <button id="checkNightStatusBtn" class="button" onclick="checkLastNight()" style="display: none;">Check Last Night
         Status</button>
+      <button id="viewOrphanMapBtn" class="button" onclick="viewOrphanMap()"
+        style="background-color: #6f42c1; color: white;">👶 View Orphan Map</button>
       <button id="testAudioBtn" class="button" onclick="testAudio()" style="background-color: #ffc107; color: #000;">🔊
         Test Audio</button>
       <button class="button" onclick="showLandingPage()">Leave Game</button>
@@ -556,7 +563,8 @@
       'hunter': '🏹 You are the Hunter! When you die, you can choose to eliminate another player.',
       'fool': '🃏 You are the Fool! You win if the villagers mistakenly vote you out.',
       'guard': '🛡️ You are the Guard! You can protect one player each night.',
-      'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.'
+      'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.',
+      'orphan': '👶 You are the Orphan! Choose your father at the beginning of the game.'
     };
 
     // Page Navigation
@@ -624,7 +632,8 @@
         'hunter': '/images/hunter.jpg',
         'fool': '/images/fool.jpg',
         'guard': '/images/guard.jpg',
-        'cupid': '/images/cupid.jpg' // Now using the actual cupid image
+        'cupid': '/images/cubid.jpg', // Note: the file is named 'cubid.jpg'
+        'orphan': '/images/orphan.png'
       };
 
       return roleImageMap[role] || null;
@@ -635,6 +644,7 @@
       const totalPlayers = parseInt(document.getElementById('totalPlayers').value);
       const werewolvesInput = document.getElementById('numWerewolves');
       const villagersInput = document.getElementById('numVillagers');
+      const orphansInput = document.getElementById('numOrphans');
 
       // Update max values - allow 4 werewolves for 11 players
       let maxWerewolves;
@@ -645,28 +655,40 @@
       }
       werewolvesInput.max = maxWerewolves;
       villagersInput.max = totalPlayers - 1;
+      orphansInput.max = totalPlayers - 1;
 
       // Auto-update villagers count
       const werewolves = parseInt(werewolvesInput.value) || 0;
+      const orphans = parseInt(orphansInput.value) || 0;
       const specialRoles = document.querySelectorAll('.special-roles input:checked').length;
-      villagersInput.value = Math.max(1, totalPlayers - werewolves - specialRoles);
+      villagersInput.value = Math.max(0, totalPlayers - werewolves - orphans - specialRoles);
     }
 
     function validateConfiguration() {
       const totalPlayers = parseInt(document.getElementById('totalPlayers').value);
       const werewolves = parseInt(document.getElementById('numWerewolves').value);
       const villagers = parseInt(document.getElementById('numVillagers').value);
+      const orphans = parseInt(document.getElementById('numOrphans').value);
       const specialRoles = document.querySelectorAll('.special-roles input:checked').length;
 
-      const totalRoles = werewolves + villagers + specialRoles;
+      const validationElement = document.getElementById('roleValidation');
 
-      if (totalRoles !== totalPlayers) {
-        document.getElementById('roleValidation').textContent = getText('totalRolesMustEqual', totalRoles, totalPlayers);
-        document.getElementById('roleValidation').style.display = 'block';
+      // Rule 1: Orphan + Villagers > 0
+      if (orphans + villagers <= 0) {
+        validationElement.textContent = 'Error: You must have at least 1 Orphan or Villager (Orphans + Villagers > 0)';
+        validationElement.style.display = 'block';
         return false;
       }
 
-      document.getElementById('roleValidation').style.display = 'none';
+      // Rule 2: Orphan + Villagers + Wolf + Special Roles = Total Players
+      const totalRoles = werewolves + villagers + orphans + specialRoles;
+      if (totalRoles !== totalPlayers) {
+        validationElement.textContent = `Error: Total roles (${totalRoles}) must equal total players (${totalPlayers}). Werewolves(${werewolves}) + Villagers(${villagers}) + Orphans(${orphans}) + Special Roles(${specialRoles}) = ${totalRoles}`;
+        validationElement.style.display = 'block';
+        return false;
+      }
+
+      validationElement.style.display = 'none';
       return true;
     }
 
@@ -682,6 +704,7 @@
         totalPlayers: parseInt(document.getElementById('totalPlayers').value),
         numWerewolves: parseInt(document.getElementById('numWerewolves').value),
         numVillagers: parseInt(document.getElementById('numVillagers').value),
+        numOrphans: parseInt(document.getElementById('numOrphans').value),
         specialRoles: Array.from(document.querySelectorAll('.special-roles input:checked')).map(cb => cb.value)
       };
 
@@ -823,9 +846,9 @@
       // Check if we have a previous session for this room and player
       const existingSession = loadSession();
       const existingSessionId = (existingSession &&
-                                existingSession.roomId === roomCode &&
-                                existingSession.playerName === name) ?
-                                existingSession.sessionId : null;
+        existingSession.roomId === roomCode &&
+        existingSession.playerName === name) ?
+        existingSession.sessionId : null;
 
       socket.emit('joinGame', {
         roomId: roomCode,
@@ -964,6 +987,9 @@
     socket.on('gameConfig', (config) => {
       document.getElementById('displayTotalPlayers').textContent = config.totalPlayers;
       document.getElementById('totalPlayerCount').textContent = config.totalPlayers;
+      document.getElementById('displayWerewolves').textContent = config.numWerewolves || 0;
+      document.getElementById('displayVillagers').textContent = config.numVillagers || 0;
+      document.getElementById('displayOrphans').textContent = config.numOrphans || 0;
       createSeatingArea(config.totalPlayers);
 
       // Store the game language for audio and UI
@@ -1079,6 +1105,7 @@
         totalPlayers: "Total Players:",
         numberOfWerewolves: "Number of Werewolves:",
         numberOfVillagers: "Number of Villagers:",
+        numberOfOrphans: "Number of Orphans:",
         specialRoles: "Special Roles:",
         createRoom: "Create Room",
         back: "Back",
@@ -1170,6 +1197,7 @@
         totalPlayers: "总玩家数:",
         numberOfWerewolves: "狼人数量:",
         numberOfVillagers: "村民数量:",
+        numberOfOrphans: "孤儿数量:",
         specialRoles: "特殊身份:",
         createRoom: "创建房间",
         back: "返回",
@@ -1290,7 +1318,13 @@
       safeUpdateText('label[for="totalPlayers"]', 'totalPlayers');
       safeUpdateText('label[for="numWerewolves"]', 'numberOfWerewolves');
       safeUpdateText('label[for="numVillagers"]', 'numberOfVillagers');
-      safeUpdateText('.config-form label:nth-of-type(5)', 'specialRoles');
+      safeUpdateText('label[for="numOrphans"]', 'numberOfOrphans');
+
+      // Special Roles label (not a direct input label, handled separately)
+      const specialRolesLabel = document.querySelector('.config-form label:nth-of-type(6)');
+      if (specialRolesLabel) {
+        specialRolesLabel.textContent = getText('specialRoles');
+      }
 
       // Update special role checkboxes
       updateSpecialRoleLabels();
@@ -1756,6 +1790,94 @@
       document.getElementById('lobbyTitle').textContent = message;
     }
 
+    // Orphan Phase Event Listeners (before night starts)
+    socket.on('orphanPhaseAudio', (data) => {
+      currentPhase = 'orphan';
+      showGameStatus('night', '👶 Orphan Turn', 'Orphans, open your eyes and choose your father');
+      // Everyone hears this audio
+      speakText(data.message);
+    });
+
+    socket.on('orphanPhaseUI', (data) => {
+      // Only orphans see this UI - show action controls
+      setTimeout(() => {
+        // Hide all previous phase buttons first
+        hideAllPhaseButtons();
+
+        document.getElementById('actionMessage').textContent = 'Choose a player to be your father:';
+        document.getElementById('actionControls').style.display = 'block';
+
+        // Make all eligible players' seats selectable for orphan
+        data.players.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            seat.setAttribute('data-player-id', player.id);
+            seat.onclick = () => selectSeatForOrphan(player.seat, player.id);
+          }
+        });
+
+      }, 2000); // Delay to let audio finish
+    });
+
+    // Function to handle orphan seat selection
+    function selectSeatForOrphan(seatId, playerId) {
+      const seat = document.querySelector(`[data-seat="${seatId}"]`);
+
+      if (seat && seat.classList.contains('selectable')) {
+        // Clear previous selections
+        document.querySelectorAll('.seat').forEach(s => {
+          s.classList.remove('selected');
+        });
+
+        // Select this seat
+        seat.classList.add('selected');
+        selectedPlayerId = playerId;
+
+        // Show orphan-specific confirm button
+        const orphanConfirmBtn = document.getElementById('orphanConfirmBtn') || createOrphanConfirmButton();
+        orphanConfirmBtn.style.display = 'inline-block';
+      }
+    }
+
+    // Create orphan confirm button if it doesn't exist
+    function createOrphanConfirmButton() {
+      const orphanConfirmBtn = document.createElement('button');
+      orphanConfirmBtn.id = 'orphanConfirmBtn';
+      orphanConfirmBtn.className = 'button success';
+      orphanConfirmBtn.textContent = 'Confirm Father Selection';
+      orphanConfirmBtn.onclick = confirmOrphanSelection;
+
+      const actionControls = document.getElementById('actionControls');
+      actionControls.appendChild(orphanConfirmBtn);
+
+      return orphanConfirmBtn;
+    }
+
+    // Function to confirm orphan's father selection
+    function confirmOrphanSelection() {
+      if (!selectedPlayerId) {
+        showActionResult('Please select a player to be your father', 'error');
+        return;
+      }
+
+      socket.emit('orphanSelectFather', { roomId: currentRoom, fatherId: selectedPlayerId }, (response) => {
+        if (response.success) {
+          hideGameActionUI();
+          showActionResult('Father selected! Waiting for other orphans or next phase...');
+          selectedPlayerId = null;
+
+          // Hide the orphan confirm button
+          const orphanConfirmBtn = document.getElementById('orphanConfirmBtn');
+          if (orphanConfirmBtn) {
+            orphanConfirmBtn.style.display = 'none';
+          }
+        } else {
+          showActionResult(response.message, 'error');
+        }
+      });
+    }
+
     // Night Phase Event Listeners (modified for lobby-based UI)
     socket.on('nightPhaseStarted', (data) => {
       showGameStatus('night', '🌙 Night Time', 'Listen for instructions and close your eyes');
@@ -2170,10 +2292,52 @@
     // Add event listeners for role input validation
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('numWerewolves').addEventListener('input', updateRoleInputs);
+      document.getElementById('numOrphans').addEventListener('input', updateRoleInputs);
       document.querySelectorAll('.special-roles input').forEach(checkbox => {
         checkbox.addEventListener('change', updateRoleInputs);
       });
     });
+
+    // View Orphan Map functionality
+    function viewOrphanMap() {
+      if (!currentRoom) {
+        alert('You must be in a game to view the orphan map');
+        return;
+      }
+
+      // Show confirmation dialog
+      if (!confirm('Do you really want to see the orphan-father map? Only click when you are game coordinator.')) {
+        return;
+      }
+
+      // Request orphan map from server
+      socket.emit('getOrphanMap', { roomId: currentRoom }, (response) => {
+        if (response.success) {
+          const chains = response.chains;
+          displayOrphanMap(chains);
+        } else {
+          alert(response.message || 'Failed to load orphan map');
+        }
+      });
+    }
+
+    // Display orphan map with graph visualization
+    function displayOrphanMap(chains) {
+      if (!chains || chains.length === 0) {
+        alert('No orphan-father relationships recorded yet');
+        return;
+      }
+
+      // Format display text
+      let displayText = '👶 Orphan-Father Map\n\n';
+      displayText += '═'.repeat(50) + '\n\n';
+
+      chains.forEach((chain, index) => {
+        displayText += `Chain ${index + 1}: ${chain.hasLoop ? '⚠️ ' : ''}${chain.text}\n\n`;
+      });
+
+      alert(displayText);
+    }
 
     // Check for existing session when page loads
     window.addEventListener('load', () => {
