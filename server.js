@@ -80,9 +80,15 @@ function createSeats(totalPlayers) {
 function createRolePool(config) {
   const allRoles = [];
 
-  // Add werewolves
+  // Add regular werewolves
   for (let i = 0; i < config.numWerewolves; i++) {
     allRoles.push('werewolf');
+  }
+
+  // Add special wolves (additive, not replacing regular werewolves)
+  const numSpecialWolves = config.specialWolves?.length || 0;
+  if (config.specialWolves && config.specialWolves.length > 0) {
+    config.specialWolves.forEach(wolf => allRoles.push(wolf));
   }
 
   // Add orphans
@@ -101,7 +107,8 @@ function createRolePool(config) {
     allRoles.push('villager');
   }
 
-  console.log(`[Role Pool Created] Total roles: ${allRoles.length}, Werewolves: ${config.numWerewolves}, Orphans: ${numOrphans}, Special: ${config.specialRoles?.length || 0}, Villagers: ${config.numVillagers}`);
+  const totalWerewolves = config.numWerewolves + numSpecialWolves;
+  console.log(`[Role Pool Created] Total roles: ${allRoles.length}, Werewolves: ${totalWerewolves} (Regular: ${config.numWerewolves}, Special: ${numSpecialWolves}), Orphans: ${numOrphans}, Special Roles: ${config.specialRoles?.length || 0}, Villagers: ${config.numVillagers}`);
   console.log(`[Role Pool Content]`, allRoles);
 
   // Shuffle roles
@@ -557,7 +564,8 @@ io.on('connection', (socket) => {
   // Werewolf action
   socket.on('werewolfKill', ({ roomId, targetId }, cb) => {
     const game = games[roomId];
-    if (!game || game.players[socket.id].role !== 'werewolf') {
+    const playerRole = game.players[socket.id]?.role;
+    if (!game || (playerRole !== 'werewolf' && playerRole !== 'whitewolf')) {
       return cb({ success: false, message: 'Invalid action' });
     }
 
@@ -568,8 +576,10 @@ io.on('connection', (socket) => {
 
     cb({ success: true, message: 'Target selected' });
 
-    // Hide UI for ALL werewolves
-    const werewolves = Object.entries(game.players).filter(([id, player]) => player.role === 'werewolf');
+    // Hide UI for ALL werewolves (including whitewolf)
+    const werewolves = Object.entries(game.players).filter(([id, player]) =>
+      player.role === 'werewolf' || player.role === 'whitewolf'
+    );
     werewolves.forEach(([id]) => {
       io.to(id).emit('hideWerewolfUI');
     });
@@ -1103,7 +1113,9 @@ function startWerewolfPhase(roomId) {
   const game = games[roomId];
   if (!game) return;
 
-  const werewolves = Object.entries(game.players).filter(([id, player]) => player.role === 'werewolf');
+  // Get all werewolves including special wolves (whitewolf, etc.)
+  const werewolfRoles = ['werewolf', 'whitewolf'];
+  const werewolves = Object.entries(game.players).filter(([id, player]) => werewolfRoles.includes(player.role));
 
   if (werewolves.length > 0) {
     // Send audio message to ALL players
@@ -1111,7 +1123,7 @@ function startWerewolfPhase(roomId) {
       message: getMessage(roomId, 'werewolfPhase')
     });
 
-    // Send UI only to werewolves
+    // Send UI only to werewolves (including special wolves)
     werewolves.forEach(([id]) => {
       io.to(id).emit('werewolfPhaseUI', {
         players: Object.values(game.players).map(p => ({ id: Object.keys(game.players).find(key => game.players[key] === p), name: p.name, seat: p.seat }))

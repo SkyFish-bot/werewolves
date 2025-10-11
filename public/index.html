@@ -56,6 +56,20 @@
       margin-right: 8px;
     }
 
+    .special-wolves {
+      margin: 10px 0 25px 0;
+    }
+
+    .special-wolves label {
+      display: flex;
+      align-items: center;
+    }
+
+    .special-wolves input {
+      width: auto;
+      margin: 0 8px;
+    }
+
     .seating-area {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -404,7 +418,12 @@
       </select>
 
       <label>Number of Werewolves:</label>
-      <input id="numWerewolves" type="number" min="1" max="4" value="3">
+      <input id="numWerewolves" type="number" min="0" max="4" value="3">
+
+      <label>Special Wolves:</label>
+      <div class="special-wolves">
+        <label><input type="checkbox" value="whitewolf"> ⚪ White Wolf</label>
+      </div>
 
       <label>Number of Villagers:</label>
       <input id="numVillagers" type="number" min="0" max="8" value="6">
@@ -554,18 +573,38 @@
     let pendingSeats = null; // Store seats data if received before seating area is created
     let sessionId = null; // Store session ID for reconnection
 
-    // Role descriptions
+    // Role descriptions with language support
     const roleDescriptions = {
-      'werewolf': '🐺 You are a Werewolf! Work with other werewolves to eliminate villagers during the night.',
-      'villager': '👨‍🌾 You are a Villager! Find and eliminate the werewolves during the day.',
-      'seer': '🔮 You are the Seer! You can check one player\'s role each night.',
-      'witch': '🧙‍♀️ You are the Witch! You have a healing potion and a poison potion.',
-      'hunter': '🏹 You are the Hunter! When you die, you can choose to eliminate another player.',
-      'fool': '🃏 You are the Fool! You win if the villagers mistakenly vote you out.',
-      'guard': '🛡️ You are the Guard! You can protect one player each night.',
-      'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.',
-      'orphan': '👶 You are the Orphan! Choose your father at the beginning of the game.'
+      en: {
+        'werewolf': '🐺 You are a Werewolf! Work with other werewolves to eliminate villagers during the night.',
+        'whitewolf': '⚪ You are the White Wolf! You are a werewolf, but you can also eliminate others by reveal yourself.',
+        'villager': '👨‍🌾 You are a Villager! Find and eliminate the werewolves during the day.',
+        'seer': '🔮 You are the Seer! You can check one player\'s role each night.',
+        'witch': '🧙‍♀️ You are the Witch! You have a healing potion and a poison potion.',
+        'hunter': '🏹 You are the Hunter! When you die, you can choose to eliminate another player.',
+        'fool': '🃏 You are the Fool! You win if the villagers win',
+        'guard': '🛡️ You are the Guard! You can protect one player each night.',
+        'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.',
+        'orphan': '👶 You are the Orphan! Choose your father at the beginning of the game.'
+      },
+      zh: {
+        'werewolf': '🐺 你是狼人！在夜晚与其他狼人一起消灭村民。',
+        'whitewolf': '⚪ 你是白狼王！你是狼人，但你也可以自爆带走人。',
+        'villager': '👨‍🌾 你是村民！白天找出并消灭狼人。',
+        'seer': '🔮 你是预言家！每个夜晚你可以查验一个玩家的身份。',
+        'witch': '🧙‍♀️ 你是女巫！你有一瓶解药和一瓶毒药。',
+        'hunter': '🏹 你是猎人！当你死亡时，你可以选择带走另一个玩家。',
+        'fool': '🃏 你是白痴！如果村民获胜，你就获胜。',
+        'guard': '🛡️ 你是守卫！每个夜晚你可以保护一个玩家。',
+        'cupid': '💘 你是丘比特！在第一个夜晚，你选择两个玩家成为恋人。',
+        'orphan': '👶 你是孤儿！在游戏开始时选择你的父亲。'
+      }
     };
+
+    // Function to get role description based on current language
+    function getRoleDescription(role) {
+      return roleDescriptions[gameLanguage]?.[role] || roleDescriptions['en'][role] || '';
+    }
 
     // Page Navigation
     function showPage(pageId) {
@@ -606,7 +645,7 @@
         if (response.success) {
           currentRole = response.role;
           document.getElementById('roleDisplay').textContent = response.role.toUpperCase();
-          document.getElementById('roleDescription').textContent = roleDescriptions[response.role] || '';
+          document.getElementById('roleDescription').textContent = getRoleDescription(response.role);
 
           // Show role image
           const roleImage = document.getElementById('roleImage');
@@ -626,6 +665,7 @@
     function getRoleImagePath(role) {
       const roleImageMap = {
         'werewolf': '/images/werewolf.jpg',
+        'whitewolf': '/images/whitewolf.png',
         'villager': '/images/villager.jpg',
         'seer': '/images/sear.jpg', // Note: the file is named 'sear.jpg'
         'witch': '/images/witch.jpg',
@@ -660,8 +700,11 @@
       // Auto-update villagers count
       const werewolves = parseInt(werewolvesInput.value) || 0;
       const orphans = parseInt(orphansInput.value) || 0;
+      const specialWolves = document.querySelectorAll('.special-wolves input:checked').length;
       const specialRoles = document.querySelectorAll('.special-roles input:checked').length;
-      villagersInput.value = Math.max(0, totalPlayers - werewolves - orphans - specialRoles);
+
+      // Calculate: Total = Werewolves + Special Wolves + Villagers + Orphans + Special Roles
+      villagersInput.value = Math.max(0, totalPlayers - werewolves - specialWolves - orphans - specialRoles);
     }
 
     function validateConfiguration() {
@@ -669,21 +712,29 @@
       const werewolves = parseInt(document.getElementById('numWerewolves').value);
       const villagers = parseInt(document.getElementById('numVillagers').value);
       const orphans = parseInt(document.getElementById('numOrphans').value);
+      const specialWolves = document.querySelectorAll('.special-wolves input:checked').length;
       const specialRoles = document.querySelectorAll('.special-roles input:checked').length;
 
       const validationElement = document.getElementById('roleValidation');
 
-      // Rule 1: Orphan + Villagers > 0
+      // Rule 1: Werewolves + Special wolves must be >= 1
+      if (werewolves + specialWolves < 1) {
+        validationElement.textContent = `Error: Total werewolves (regular + special) must be at least 1`;
+        validationElement.style.display = 'block';
+        return false;
+      }
+
+      // Rule 2: Orphan + Villagers > 0
       if (orphans + villagers <= 0) {
         validationElement.textContent = 'Error: You must have at least 1 Orphan or Villager (Orphans + Villagers > 0)';
         validationElement.style.display = 'block';
         return false;
       }
 
-      // Rule 2: Orphan + Villagers + Wolf + Special Roles = Total Players
-      const totalRoles = werewolves + villagers + orphans + specialRoles;
+      // Rule 3: Werewolves + Special Wolves + Orphans + Villagers + Special Roles = Total Players
+      const totalRoles = werewolves + specialWolves + villagers + orphans + specialRoles;
       if (totalRoles !== totalPlayers) {
-        validationElement.textContent = `Error: Total roles (${totalRoles}) must equal total players (${totalPlayers}). Werewolves(${werewolves}) + Villagers(${villagers}) + Orphans(${orphans}) + Special Roles(${specialRoles}) = ${totalRoles}`;
+        validationElement.textContent = `Error: Total roles (${totalRoles}) must equal total players (${totalPlayers}). Werewolves(${werewolves}) + Special Wolves(${specialWolves}) + Villagers(${villagers}) + Orphans(${orphans}) + Special Roles(${specialRoles}) = ${totalRoles}`;
         validationElement.style.display = 'block';
         return false;
       }
@@ -705,6 +756,7 @@
         numWerewolves: parseInt(document.getElementById('numWerewolves').value),
         numVillagers: parseInt(document.getElementById('numVillagers').value),
         numOrphans: parseInt(document.getElementById('numOrphans').value),
+        specialWolves: Array.from(document.querySelectorAll('.special-wolves input:checked')).map(cb => cb.value),
         specialRoles: Array.from(document.querySelectorAll('.special-roles input:checked')).map(cb => cb.value)
       };
 
@@ -1104,6 +1156,7 @@
         gameLanguage: "Game Language:",
         totalPlayers: "Total Players:",
         numberOfWerewolves: "Number of Werewolves:",
+        specialWolves: "Special Wolves:",
         numberOfVillagers: "Number of Villagers:",
         numberOfOrphans: "Number of Orphans:",
         specialRoles: "Special Roles:",
@@ -1196,6 +1249,7 @@
         gameLanguage: "游戏语言:",
         totalPlayers: "总玩家数:",
         numberOfWerewolves: "狼人数量:",
+        specialWolves: "特殊狼人:",
         numberOfVillagers: "村民数量:",
         numberOfOrphans: "孤儿数量:",
         specialRoles: "特殊身份:",
@@ -1320,11 +1374,16 @@
       safeUpdateText('label[for="numVillagers"]', 'numberOfVillagers');
       safeUpdateText('label[for="numOrphans"]', 'numberOfOrphans');
 
-      // Special Roles label (not a direct input label, handled separately)
-      const specialRolesLabel = document.querySelector('.config-form label:nth-of-type(6)');
-      if (specialRolesLabel) {
-        specialRolesLabel.textContent = getText('specialRoles');
-      }
+      // Special Wolves and Special Roles labels (not direct input labels, handled separately)
+      const labels = document.querySelectorAll('.config-form label');
+      labels.forEach(label => {
+        if (label.textContent.includes('Special Wolves') || label.textContent.includes('特殊狼人')) {
+          label.textContent = getText('specialWolves');
+        }
+        if (label.textContent.includes('Special Roles') || label.textContent.includes('特殊身份')) {
+          label.textContent = getText('specialRoles');
+        }
+      });
 
       // Update special role checkboxes
       updateSpecialRoleLabels();
@@ -2293,6 +2352,9 @@
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('numWerewolves').addEventListener('input', updateRoleInputs);
       document.getElementById('numOrphans').addEventListener('input', updateRoleInputs);
+      document.querySelectorAll('.special-wolves input').forEach(checkbox => {
+        checkbox.addEventListener('change', updateRoleInputs);
+      });
       document.querySelectorAll('.special-roles input').forEach(checkbox => {
         checkbox.addEventListener('change', updateRoleInputs);
       });
