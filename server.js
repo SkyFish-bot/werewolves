@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const orphanManager = require('./orphanManager');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,6 +14,8 @@ const hostConfigs = {}; // Temporary storage for host configurations
 const messages = {
   en: {
     nightStart: 'Everyone, close your eyes',
+    orphanPhase: 'Everyone open eyes, if you are orphan choose your father',
+    orphanClose: 'Everyone close your eyes',
     cupidPhase: 'Cupid, open your eyes. Choose two players to be lovers.',
     cupidClose: 'Cupid, close your eyes',
     loversReveal: 'Everyone, open your eyes, check if you are selected as lovers',
@@ -34,6 +37,8 @@ const messages = {
   },
   zh: {
     nightStart: '天黑了，请大家闭眼',
+    orphanPhase: '所有人请睁眼，如果是孤儿请请选择你的父亲',
+    orphanClose: '所有人请闭眼',
     cupidPhase: '丘比特请睁眼，请选择两个玩家成为恋人',
     cupidClose: '丘比特请闭眼',
     loversReveal: '请大家睁眼，看看自己是否被选为恋人',
@@ -75,15 +80,41 @@ function createSeats(totalPlayers) {
 function createRolePool(config) {
   const allRoles = [];
 
-  // Add basic roles
-  for (let i = 0; i < config.numWerewolves; i++) allRoles.push('werewolf');
-  for (let i = 0; i < config.numVillagers; i++) allRoles.push('villager');
+  // Add regular werewolves
+  for (let i = 0; i < config.numWerewolves; i++) {
+    allRoles.push('werewolf');
+  }
 
-  // Add special roles
-  config.specialRoles.forEach(role => allRoles.push(role));
+  // Add special wolves (additive, not replacing regular werewolves)
+  const numSpecialWolves = config.specialWolves?.length || 0;
+  if (config.specialWolves && config.specialWolves.length > 0) {
+    config.specialWolves.forEach(wolf => allRoles.push(wolf));
+  }
+
+  // Add orphans
+  const numOrphans = config.numOrphans || 0;
+  for (let i = 0; i < numOrphans; i++) {
+    allRoles.push('orphan');
+  }
+
+  // Add special roles (these replace villagers)
+  if (config.specialRoles && config.specialRoles.length > 0) {
+    config.specialRoles.forEach(role => allRoles.push(role));
+  }
+
+  // Add remaining villagers
+  for (let i = 0; i < config.numVillagers; i++) {
+    allRoles.push('villager');
+  }
+
+  const totalWerewolves = config.numWerewolves + numSpecialWolves;
+  console.log(`[Role Pool Created] Total roles: ${allRoles.length}, Werewolves: ${totalWerewolves} (Regular: ${config.numWerewolves}, Special: ${numSpecialWolves}), Orphans: ${numOrphans}, Special Roles: ${config.specialRoles?.length || 0}, Villagers: ${config.numVillagers}`);
+  console.log(`[Role Pool Content]`, allRoles);
 
   // Shuffle roles
-  return allRoles.sort(() => Math.random() - 0.5);
+  const shuffledRoles = allRoles.sort(() => Math.random() - 0.5);
+  console.log(`[Role Pool Shuffled]`, shuffledRoles);
+  return shuffledRoles;
 }
 
 function assignRoleToPlayer(game, playerId) {
@@ -111,7 +142,8 @@ io.on('connection', (socket) => {
 
   // Host configures game
   socket.on('configureGame', (config, cb) => {
-    console.log('Game configured:', config);
+    console.log('Game configured:', JSON.stringify(config, null, 2));
+    console.log('Number of Orphans:', config.numOrphans);
     hostConfigs[socket.id] = config;
     cb({ success: true, message: 'Configuration saved!' });
   });
@@ -332,8 +364,8 @@ io.on('connection', (socket) => {
     // Update seats to show fake players
     io.to(roomId).emit('updateSeats', game.seats);
 
-    // Start night phase
-    startNightPhase(roomId);
+    // Start with beforeNightStart phase (for orphan father selection)
+    startBeforeNightStartPhase(roomId);
 
     cb({ success: true, message: 'Game started!' });
   });
@@ -382,6 +414,72 @@ io.on('connection', (socket) => {
     } else {
       cb({ success: false, message: 'Role not assigned yet' });
     }
+  });
+
+  // Orphan action - choosing father
+  socket.on('orphanSelectFather', ({ roomId, fatherId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'orphan') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    if (!fatherId || fatherId === socket.id) {
+      return cb({ success: false, message: 'Invalid father selection' });
+    }
+
+    // Store the orphan-father relationship
+    orphanManager.setFather(roomId, socket.id, fatherId);
+
+    cb({ success: true, message: 'Father selected' });
+
+    // Check if all orphans have chosen fathers
+    const allOrphans = Object.entries(game.players)
+      .filter(([id, player]) => player.role === 'orphan' && !player.isFake)
+      .map(([id]) => id);
+
+    if (orphanManager.allOrphansChosen(roomId, allOrphans)) {
+      // All orphans have chosen, proceed to night phase
+      console.log(`[${roomId}] All orphans have chosen fathers, proceeding to night phase`);
+
+      // Notify that orphans close their eyes
+      io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'orphanClose') });
+
+      // Wait a moment, then start night phase
+      setTimeout(() => startNightPhase(roomId), 2000);
+    }
+  });
+
+  // Get orphan-father map
+  socket.on('getOrphanMap', ({ roomId }, cb) => {
+    const game = games[roomId];
+    if (!game) {
+      return cb({ success: false, message: 'Game not found' });
+    }
+
+    // Get all orphan-father pairs
+    const orphanFatherPairs = orphanManager.getAllPairs(roomId);
+
+    // Convert IDs to player names and seat numbers
+    const mapData = {};
+    Object.entries(orphanFatherPairs).forEach(([orphanId, fatherId]) => {
+      const orphan = game.players[orphanId];
+      const father = game.players[fatherId];
+
+      if (orphan && father) {
+        mapData[orphanId] = {
+          orphanName: orphan.name,
+          orphanSeat: orphan.seat,
+          fatherId: fatherId,
+          fatherName: father.name,
+          fatherSeat: father.seat
+        };
+      }
+    });
+
+    // Build chains using orphanManager
+    const chains = orphanManager.buildOrphanChains(roomId, mapData);
+
+    cb({ success: true, mapData, chains });
   });
 
   // Cupid action
@@ -466,7 +564,8 @@ io.on('connection', (socket) => {
   // Werewolf action
   socket.on('werewolfKill', ({ roomId, targetId }, cb) => {
     const game = games[roomId];
-    if (!game || game.players[socket.id].role !== 'werewolf') {
+    const playerRole = game.players[socket.id]?.role;
+    if (!game || (playerRole !== 'werewolf' && playerRole !== 'whitewolf')) {
       return cb({ success: false, message: 'Invalid action' });
     }
 
@@ -477,8 +576,10 @@ io.on('connection', (socket) => {
 
     cb({ success: true, message: 'Target selected' });
 
-    // Hide UI for ALL werewolves
-    const werewolves = Object.entries(game.players).filter(([id, player]) => player.role === 'werewolf');
+    // Hide UI for ALL werewolves (including whitewolf)
+    const werewolves = Object.entries(game.players).filter(([id, player]) =>
+      player.role === 'werewolf' || player.role === 'whitewolf'
+    );
     werewolves.forEach(([id]) => {
       io.to(id).emit('hideWerewolfUI');
     });
@@ -741,6 +842,56 @@ io.on('connection', (socket) => {
   });
 });
 
+// Before Night Start Phase - Orphan Father Selection
+function startBeforeNightStartPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  // Get all orphans in the game
+  const orphans = Object.entries(game.players).filter(([id, player]) => player.role === 'orphan');
+  const orphanIds = orphans.map(([id]) => id);
+  const realOrphans = orphans.filter(([id, player]) => !player.isFake);
+
+  if (orphans.length === 0) {
+    // No orphans, skip to night phase
+    console.log(`[${roomId}] No orphans present, skipping beforeNightStart phase`);
+    startNightPhase(roomId);
+    return;
+  }
+
+  // Initialize orphan manager for this game
+  orphanManager.initializeGame(roomId);
+
+  // Announce orphan father selection phase to ALL players
+  const orphanMessage = getMessage(roomId, 'orphanPhase') || 'Orphans, open your eyes and choose your father.';
+  io.to(roomId).emit('orphanPhaseAudio', { message: orphanMessage });
+
+  if (realOrphans.length > 0) {
+    // Send UI only to real orphans
+    realOrphans.forEach(([id]) => {
+      io.to(id).emit('orphanPhaseUI', {
+        players: Object.values(game.players)
+          .filter(p => {
+            const playerId = Object.keys(game.players).find(key => game.players[key] === p);
+            return playerId !== id; // Can't choose themselves
+          })
+          .map(p => ({
+            id: Object.keys(game.players).find(key => game.players[key] === p),
+            name: p.name,
+            seat: p.seat
+          }))
+      });
+    });
+  } else {
+    // Only fake orphans, automatically complete orphan phase
+    console.log(`[${roomId}] Only fake orphans present, auto-completing orphan phase`);
+    setTimeout(() => {
+      io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'orphanClose') || 'Orphans, close your eyes' });
+      setTimeout(() => startNightPhase(roomId), 2000);
+    }, 3000);
+  }
+}
+
 // Night Phase Functions
 function startNightPhase(roomId) {
   const game = games[roomId];
@@ -962,7 +1113,9 @@ function startWerewolfPhase(roomId) {
   const game = games[roomId];
   if (!game) return;
 
-  const werewolves = Object.entries(game.players).filter(([id, player]) => player.role === 'werewolf');
+  // Get all werewolves including special wolves (whitewolf, etc.)
+  const werewolfRoles = ['werewolf', 'whitewolf'];
+  const werewolves = Object.entries(game.players).filter(([id, player]) => werewolfRoles.includes(player.role));
 
   if (werewolves.length > 0) {
     // Send audio message to ALL players
@@ -970,7 +1123,7 @@ function startWerewolfPhase(roomId) {
       message: getMessage(roomId, 'werewolfPhase')
     });
 
-    // Send UI only to werewolves
+    // Send UI only to werewolves (including special wolves)
     werewolves.forEach(([id]) => {
       io.to(id).emit('werewolfPhaseUI', {
         players: Object.values(game.players).map(p => ({ id: Object.keys(game.players).find(key => game.players[key] === p), name: p.name, seat: p.seat }))

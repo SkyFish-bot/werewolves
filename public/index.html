@@ -56,6 +56,20 @@
       margin-right: 8px;
     }
 
+    .special-wolves {
+      margin: 10px 0 25px 0;
+    }
+
+    .special-wolves label {
+      display: flex;
+      align-items: center;
+    }
+
+    .special-wolves input {
+      width: auto;
+      margin: 0 8px;
+    }
+
     .seating-area {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -404,10 +418,18 @@
       </select>
 
       <label>Number of Werewolves:</label>
-      <input id="numWerewolves" type="number" min="1" max="4" value="3">
+      <input id="numWerewolves" type="number" min="0" max="4" value="3">
+
+      <label>Special Wolves:</label>
+      <div class="special-wolves">
+        <label><input type="checkbox" value="whitewolf"> ⚪ White Wolf</label>
+      </div>
 
       <label>Number of Villagers:</label>
-      <input id="numVillagers" type="number" min="1" max="8" value="6">
+      <input id="numVillagers" type="number" min="0" max="8" value="6">
+
+      <label>Number of Orphans:</label>
+      <input id="numOrphans" type="number" min="0" max="4" value="0">
 
       <label>Special Roles:</label>
       <div class="special-roles">
@@ -417,6 +439,7 @@
         <label><input type="checkbox" value="fool"> 🃏 Fool</label>
         <label><input type="checkbox" value="guard"> 🛡️ Guard</label>
         <label><input type="checkbox" value="cupid"> 💘 Cupid</label>
+        <label><input type="checkbox" value="knight"> ⚔️ Knight</label>
       </div>
 
       <div id="roleValidation" class="error" style="display: none;"></div>
@@ -440,6 +463,8 @@
       <div><strong>Room Code:</strong> <span id="displayRoomCode"></span></div>
       <div><strong>Total Players:</strong> <span id="displayTotalPlayers"></span></div>
       <div><strong>Seated Players:</strong> <span id="seatedCount">0</span> / <span id="totalPlayerCount">0</span></div>
+      <div><strong>Werewolves:</strong> <span id="displayWerewolves">0</span> | <strong>Villagers:</strong> <span
+          id="displayVillagers">0</span> | <strong>Orphans:</strong> <span id="displayOrphans">0</span></div>
       <div><strong>Roles:</strong> <span id="roleStatusText" class="role-status">Not assigned</span></div>
     </div>
 
@@ -470,6 +495,8 @@
       <button id="seeRoleBtn" class="button" onclick="showRolePage()" style="display: none;">See Your Role</button>
       <button id="checkNightStatusBtn" class="button" onclick="checkLastNight()" style="display: none;">Check Last Night
         Status</button>
+      <button id="viewOrphanMapBtn" class="button" onclick="viewOrphanMap()"
+        style="background-color: #6f42c1; color: white;">👶 View Orphan Map</button>
       <button id="testAudioBtn" class="button" onclick="testAudio()" style="background-color: #ffc107; color: #000;">🔊
         Test Audio</button>
       <button class="button" onclick="showLandingPage()">Leave Game</button>
@@ -547,17 +574,40 @@
     let pendingSeats = null; // Store seats data if received before seating area is created
     let sessionId = null; // Store session ID for reconnection
 
-    // Role descriptions
+    // Role descriptions with language support
     const roleDescriptions = {
-      'werewolf': '🐺 You are a Werewolf! Work with other werewolves to eliminate villagers during the night.',
-      'villager': '👨‍🌾 You are a Villager! Find and eliminate the werewolves during the day.',
-      'seer': '🔮 You are the Seer! You can check one player\'s role each night.',
-      'witch': '🧙‍♀️ You are the Witch! You have a healing potion and a poison potion.',
-      'hunter': '🏹 You are the Hunter! When you die, you can choose to eliminate another player.',
-      'fool': '🃏 You are the Fool! You win if the villagers mistakenly vote you out.',
-      'guard': '🛡️ You are the Guard! You can protect one player each night.',
-      'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.'
+      en: {
+        'werewolf': '🐺 You are a Werewolf! Work with other werewolves to eliminate villagers during the night.',
+        'whitewolf': '⚪ You are the White Wolf! You are a werewolf, but you can also eliminate others by reveal yourself.',
+        'villager': '👨‍🌾 You are a Villager! Find and eliminate the werewolves during the day.',
+        'seer': '🔮 You are the Seer! You can check one player\'s role each night.',
+        'witch': '🧙‍♀️ You are the Witch! You have a healing potion and a poison potion.',
+        'hunter': '🏹 You are the Hunter! When you die, you can choose to eliminate another player.',
+        'fool': '🃏 You are the Fool! You win if the villagers win',
+        'guard': '🛡️ You are the Guard! You can protect one player each night.',
+        'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.',
+        'orphan': '👶 You are the Orphan! Choose your father at the beginning of the game.',
+        'knight': '⚔️ You are the Knight! You can challenge any player once during the day to reveal white wolf.'
+      },
+      zh: {
+        'werewolf': '🐺 你是狼人！在夜晚与其他狼人一起消灭村民。',
+        'whitewolf': '⚪ 你是白狼王！你是狼人，但你也可以自爆带走人。',
+        'villager': '👨‍🌾 你是村民！白天找出并消灭狼人。',
+        'seer': '🔮 你是预言家！每个夜晚你可以查验一个玩家的身份。',
+        'witch': '🧙‍♀️ 你是女巫！你有一瓶解药和一瓶毒药。',
+        'hunter': '🏹 你是猎人！当你死亡时，你可以选择带走另一个玩家。',
+        'fool': '🃏 你是白痴！如果村民获胜，你就获胜。',
+        'guard': '🛡️ 你是守卫！每个夜晚你可以保护一个玩家。',
+        'cupid': '💘 你是丘比特！在第一个夜晚，你选择两个玩家成为恋人。',
+        'knight': '⚔️ 你是骑士！你可以在白天挑战任何玩家一次以揭示白狼王。',
+        'orphan': '👶 你是孤儿！在游戏开始时选择你的父亲。'
+      }
     };
+
+    // Function to get role description based on current language
+    function getRoleDescription(role) {
+      return roleDescriptions[gameLanguage]?.[role] || roleDescriptions['en'][role] || '';
+    }
 
     // Page Navigation
     function showPage(pageId) {
@@ -598,7 +648,7 @@
         if (response.success) {
           currentRole = response.role;
           document.getElementById('roleDisplay').textContent = response.role.toUpperCase();
-          document.getElementById('roleDescription').textContent = roleDescriptions[response.role] || '';
+          document.getElementById('roleDescription').textContent = getRoleDescription(response.role);
 
           // Show role image
           const roleImage = document.getElementById('roleImage');
@@ -618,13 +668,16 @@
     function getRoleImagePath(role) {
       const roleImageMap = {
         'werewolf': '/images/werewolf.jpg',
+        'whitewolf': '/images/whitewolf.png',
         'villager': '/images/villager.jpg',
         'seer': '/images/sear.jpg', // Note: the file is named 'sear.jpg'
         'witch': '/images/witch.jpg',
         'hunter': '/images/hunter.jpg',
         'fool': '/images/fool.jpg',
         'guard': '/images/guard.jpg',
-        'cupid': '/images/cupid.jpg' // Now using the actual cupid image
+        'cupid': '/images/cubid.jpg', // Note: the file is named 'cubid.jpg'
+        'orphan': '/images/orphan.png',
+        'knight': '/images/knight.png'
       };
 
       return roleImageMap[role] || null;
@@ -635,6 +688,7 @@
       const totalPlayers = parseInt(document.getElementById('totalPlayers').value);
       const werewolvesInput = document.getElementById('numWerewolves');
       const villagersInput = document.getElementById('numVillagers');
+      const orphansInput = document.getElementById('numOrphans');
 
       // Update max values - allow 4 werewolves for 11 players
       let maxWerewolves;
@@ -645,28 +699,51 @@
       }
       werewolvesInput.max = maxWerewolves;
       villagersInput.max = totalPlayers - 1;
+      orphansInput.max = totalPlayers - 1;
 
       // Auto-update villagers count
       const werewolves = parseInt(werewolvesInput.value) || 0;
+      const orphans = parseInt(orphansInput.value) || 0;
+      const specialWolves = document.querySelectorAll('.special-wolves input:checked').length;
       const specialRoles = document.querySelectorAll('.special-roles input:checked').length;
-      villagersInput.value = Math.max(1, totalPlayers - werewolves - specialRoles);
+
+      // Calculate: Total = Werewolves + Special Wolves + Villagers + Orphans + Special Roles
+      villagersInput.value = Math.max(0, totalPlayers - werewolves - specialWolves - orphans - specialRoles);
     }
 
     function validateConfiguration() {
       const totalPlayers = parseInt(document.getElementById('totalPlayers').value);
       const werewolves = parseInt(document.getElementById('numWerewolves').value);
       const villagers = parseInt(document.getElementById('numVillagers').value);
+      const orphans = parseInt(document.getElementById('numOrphans').value);
+      const specialWolves = document.querySelectorAll('.special-wolves input:checked').length;
       const specialRoles = document.querySelectorAll('.special-roles input:checked').length;
 
-      const totalRoles = werewolves + villagers + specialRoles;
+      const validationElement = document.getElementById('roleValidation');
 
-      if (totalRoles !== totalPlayers) {
-        document.getElementById('roleValidation').textContent = getText('totalRolesMustEqual', totalRoles, totalPlayers);
-        document.getElementById('roleValidation').style.display = 'block';
+      // Rule 1: Werewolves + Special wolves must be >= 1
+      if (werewolves + specialWolves < 1) {
+        validationElement.textContent = `Error: Total werewolves (regular + special) must be at least 1`;
+        validationElement.style.display = 'block';
         return false;
       }
 
-      document.getElementById('roleValidation').style.display = 'none';
+      // Rule 2: Orphan + Villagers > 0
+      if (orphans + villagers <= 0) {
+        validationElement.textContent = 'Error: You must have at least 1 Orphan or Villager (Orphans + Villagers > 0)';
+        validationElement.style.display = 'block';
+        return false;
+      }
+
+      // Rule 3: Werewolves + Special Wolves + Orphans + Villagers + Special Roles = Total Players
+      const totalRoles = werewolves + specialWolves + villagers + orphans + specialRoles;
+      if (totalRoles !== totalPlayers) {
+        validationElement.textContent = `Error: Total roles (${totalRoles}) must equal total players (${totalPlayers}). Werewolves(${werewolves}) + Special Wolves(${specialWolves}) + Villagers(${villagers}) + Orphans(${orphans}) + Special Roles(${specialRoles}) = ${totalRoles}`;
+        validationElement.style.display = 'block';
+        return false;
+      }
+
+      validationElement.style.display = 'none';
       return true;
     }
 
@@ -682,6 +759,8 @@
         totalPlayers: parseInt(document.getElementById('totalPlayers').value),
         numWerewolves: parseInt(document.getElementById('numWerewolves').value),
         numVillagers: parseInt(document.getElementById('numVillagers').value),
+        numOrphans: parseInt(document.getElementById('numOrphans').value),
+        specialWolves: Array.from(document.querySelectorAll('.special-wolves input:checked')).map(cb => cb.value),
         specialRoles: Array.from(document.querySelectorAll('.special-roles input:checked')).map(cb => cb.value)
       };
 
@@ -823,9 +902,9 @@
       // Check if we have a previous session for this room and player
       const existingSession = loadSession();
       const existingSessionId = (existingSession &&
-                                existingSession.roomId === roomCode &&
-                                existingSession.playerName === name) ?
-                                existingSession.sessionId : null;
+        existingSession.roomId === roomCode &&
+        existingSession.playerName === name) ?
+        existingSession.sessionId : null;
 
       socket.emit('joinGame', {
         roomId: roomCode,
@@ -964,6 +1043,9 @@
     socket.on('gameConfig', (config) => {
       document.getElementById('displayTotalPlayers').textContent = config.totalPlayers;
       document.getElementById('totalPlayerCount').textContent = config.totalPlayers;
+      document.getElementById('displayWerewolves').textContent = config.numWerewolves || 0;
+      document.getElementById('displayVillagers').textContent = config.numVillagers || 0;
+      document.getElementById('displayOrphans').textContent = config.numOrphans || 0;
       createSeatingArea(config.totalPlayers);
 
       // Store the game language for audio and UI
@@ -1078,7 +1160,9 @@
         gameLanguage: "Game Language:",
         totalPlayers: "Total Players:",
         numberOfWerewolves: "Number of Werewolves:",
+        specialWolves: "Special Wolves:",
         numberOfVillagers: "Number of Villagers:",
+        numberOfOrphans: "Number of Orphans:",
         specialRoles: "Special Roles:",
         createRoom: "Create Room",
         back: "Back",
@@ -1169,7 +1253,9 @@
         gameLanguage: "游戏语言:",
         totalPlayers: "总玩家数:",
         numberOfWerewolves: "狼人数量:",
+        specialWolves: "特殊狼人:",
         numberOfVillagers: "村民数量:",
+        numberOfOrphans: "孤儿数量:",
         specialRoles: "特殊身份:",
         createRoom: "创建房间",
         back: "返回",
@@ -1290,7 +1376,18 @@
       safeUpdateText('label[for="totalPlayers"]', 'totalPlayers');
       safeUpdateText('label[for="numWerewolves"]', 'numberOfWerewolves');
       safeUpdateText('label[for="numVillagers"]', 'numberOfVillagers');
-      safeUpdateText('.config-form label:nth-of-type(5)', 'specialRoles');
+      safeUpdateText('label[for="numOrphans"]', 'numberOfOrphans');
+
+      // Special Wolves and Special Roles labels (not direct input labels, handled separately)
+      const labels = document.querySelectorAll('.config-form label');
+      labels.forEach(label => {
+        if (label.textContent.includes('Special Wolves') || label.textContent.includes('特殊狼人')) {
+          label.textContent = getText('specialWolves');
+        }
+        if (label.textContent.includes('Special Roles') || label.textContent.includes('特殊身份')) {
+          label.textContent = getText('specialRoles');
+        }
+      });
 
       // Update special role checkboxes
       updateSpecialRoleLabels();
@@ -1756,6 +1853,94 @@
       document.getElementById('lobbyTitle').textContent = message;
     }
 
+    // Orphan Phase Event Listeners (before night starts)
+    socket.on('orphanPhaseAudio', (data) => {
+      currentPhase = 'orphan';
+      showGameStatus('night', '👶 Orphan Turn', 'Orphans, open your eyes and choose your father');
+      // Everyone hears this audio
+      speakText(data.message);
+    });
+
+    socket.on('orphanPhaseUI', (data) => {
+      // Only orphans see this UI - show action controls
+      setTimeout(() => {
+        // Hide all previous phase buttons first
+        hideAllPhaseButtons();
+
+        document.getElementById('actionMessage').textContent = 'Choose a player to be your father:';
+        document.getElementById('actionControls').style.display = 'block';
+
+        // Make all eligible players' seats selectable for orphan
+        data.players.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            seat.setAttribute('data-player-id', player.id);
+            seat.onclick = () => selectSeatForOrphan(player.seat, player.id);
+          }
+        });
+
+      }, 2000); // Delay to let audio finish
+    });
+
+    // Function to handle orphan seat selection
+    function selectSeatForOrphan(seatId, playerId) {
+      const seat = document.querySelector(`[data-seat="${seatId}"]`);
+
+      if (seat && seat.classList.contains('selectable')) {
+        // Clear previous selections
+        document.querySelectorAll('.seat').forEach(s => {
+          s.classList.remove('selected');
+        });
+
+        // Select this seat
+        seat.classList.add('selected');
+        selectedPlayerId = playerId;
+
+        // Show orphan-specific confirm button
+        const orphanConfirmBtn = document.getElementById('orphanConfirmBtn') || createOrphanConfirmButton();
+        orphanConfirmBtn.style.display = 'inline-block';
+      }
+    }
+
+    // Create orphan confirm button if it doesn't exist
+    function createOrphanConfirmButton() {
+      const orphanConfirmBtn = document.createElement('button');
+      orphanConfirmBtn.id = 'orphanConfirmBtn';
+      orphanConfirmBtn.className = 'button success';
+      orphanConfirmBtn.textContent = 'Confirm Father Selection';
+      orphanConfirmBtn.onclick = confirmOrphanSelection;
+
+      const actionControls = document.getElementById('actionControls');
+      actionControls.appendChild(orphanConfirmBtn);
+
+      return orphanConfirmBtn;
+    }
+
+    // Function to confirm orphan's father selection
+    function confirmOrphanSelection() {
+      if (!selectedPlayerId) {
+        showActionResult('Please select a player to be your father', 'error');
+        return;
+      }
+
+      socket.emit('orphanSelectFather', { roomId: currentRoom, fatherId: selectedPlayerId }, (response) => {
+        if (response.success) {
+          hideGameActionUI();
+          showActionResult('Father selected! Waiting for other orphans or next phase...');
+          selectedPlayerId = null;
+
+          // Hide the orphan confirm button
+          const orphanConfirmBtn = document.getElementById('orphanConfirmBtn');
+          if (orphanConfirmBtn) {
+            orphanConfirmBtn.style.display = 'none';
+          }
+        } else {
+          showActionResult(response.message, 'error');
+        }
+      });
+    }
+
     // Night Phase Event Listeners (modified for lobby-based UI)
     socket.on('nightPhaseStarted', (data) => {
       showGameStatus('night', '🌙 Night Time', 'Listen for instructions and close your eyes');
@@ -2170,10 +2355,55 @@
     // Add event listeners for role input validation
     document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('numWerewolves').addEventListener('input', updateRoleInputs);
+      document.getElementById('numOrphans').addEventListener('input', updateRoleInputs);
+      document.querySelectorAll('.special-wolves input').forEach(checkbox => {
+        checkbox.addEventListener('change', updateRoleInputs);
+      });
       document.querySelectorAll('.special-roles input').forEach(checkbox => {
         checkbox.addEventListener('change', updateRoleInputs);
       });
     });
+
+    // View Orphan Map functionality
+    function viewOrphanMap() {
+      if (!currentRoom) {
+        alert('You must be in a game to view the orphan map');
+        return;
+      }
+
+      // Show confirmation dialog
+      if (!confirm('Do you really want to see the orphan-father map? Only click when you are game coordinator.')) {
+        return;
+      }
+
+      // Request orphan map from server
+      socket.emit('getOrphanMap', { roomId: currentRoom }, (response) => {
+        if (response.success) {
+          const chains = response.chains;
+          displayOrphanMap(chains);
+        } else {
+          alert(response.message || 'Failed to load orphan map');
+        }
+      });
+    }
+
+    // Display orphan map with graph visualization
+    function displayOrphanMap(chains) {
+      if (!chains || chains.length === 0) {
+        alert('No orphan-father relationships recorded yet');
+        return;
+      }
+
+      // Format display text
+      let displayText = '👶 Orphan-Father Map\n\n';
+      displayText += '═'.repeat(50) + '\n\n';
+
+      chains.forEach((chain, index) => {
+        displayText += `Chain ${index + 1}: ${chain.hasLoop ? '⚠️ ' : ''}${chain.text}\n\n`;
+      });
+
+      alert(displayText);
+    }
 
     // Check for existing session when page loads
     window.addEventListener('load', () => {
