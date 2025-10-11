@@ -17,6 +17,8 @@ const messages = {
     cupidClose: 'Cupid, close your eyes',
     loversReveal: 'Everyone, open your eyes, check if you are selected as lovers',
     loversClose: 'Everyone, close your eyes',
+    guardPhase: 'Guard, open your eyes. Choose a player to protect.',
+    guardClose: 'Guard, close your eyes',
     werewolfPhase: 'Werewolves, open your eyes. Choose a player to kill.',
     werewolfClose: 'Werewolves, close your eyes',
     witchPhase: 'Witch, open your eyes',
@@ -36,6 +38,8 @@ const messages = {
     cupidClose: '丘比特请闭眼',
     loversReveal: '请大家睁眼，看看自己是否被选为恋人',
     loversClose: '请大家闭眼',
+    guardPhase: '守卫请睁眼，请选择一个玩家保护',
+    guardClose: '守卫请闭眼',
     werewolfPhase: '狼人请睁眼，请选择一个玩家杀死',
     werewolfClose: '狼人请闭眼',
     witchPhase: '女巫请睁眼',
@@ -136,28 +140,79 @@ io.on('connection', (socket) => {
   });
 
   // Player sets name and joins room
-  socket.on('joinGame', ({ roomId, name }, cb) => {
+  socket.on('joinGame', ({ roomId, name, sessionId }, cb) => {
     const game = games[roomId];
     if (!game) {
       return cb({ success: false, message: 'Room not found' });
     }
 
-    if (Object.keys(game.players).length >= game.config.totalPlayers) {
-      return cb({ success: false, message: 'Room is full' });
+    let playerId = socket.id;
+    let isReconnecting = false;
+
+    // Check if this is a reconnection using sessionId
+    if (sessionId) {
+      // Look for existing player with this sessionId
+      const existingPlayer = Object.entries(game.players).find(([id, player]) => player.sessionId === sessionId);
+      if (existingPlayer) {
+        const [oldSocketId, playerData] = existingPlayer;
+        console.log(`[${roomId}] Player ${name} reconnecting with session ${sessionId}, old socket: ${oldSocketId}, new socket: ${socket.id}`);
+
+        // Transfer player data to new socket ID
+        delete game.players[oldSocketId];
+        game.players[socket.id] = {
+          ...playerData,
+          isConnected: true,
+          socketId: socket.id
+        };
+
+        // Transfer role data
+        if (game.roles[oldSocketId]) {
+          game.roles[socket.id] = game.roles[oldSocketId];
+          delete game.roles[oldSocketId];
+        }
+
+        // Update seat player reference
+        const seat = game.seats.find(s => s.player && s.player.id === oldSocketId);
+        if (seat) {
+          seat.player.id = socket.id;
+          seat.player.isConnected = true;
+        }
+
+        isReconnecting = true;
+        playerId = socket.id;
+      }
     }
 
-    game.players[socket.id] = {
-      name,
-      seat: null,
-      role: null,
-      isHost: socket.id === game.hostId
-    };
+    // If not reconnecting, create new player
+    if (!isReconnecting) {
+      if (Object.keys(game.players).length >= game.config.totalPlayers) {
+        return cb({ success: false, message: 'Room is full' });
+      }
+
+      const newSessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+      game.players[socket.id] = {
+        name,
+        seat: null,
+        role: null,
+        isHost: socket.id === game.hostId,
+        sessionId: newSessionId,
+        isConnected: true,
+        socketId: socket.id
+      };
+    }
 
     socket.join(roomId);
 
-    cb({ success: true, message: 'Joined successfully!', isHost: socket.id === game.hostId });
+    const message = isReconnecting ? 'Reconnected successfully!' : 'Joined successfully!';
+    cb({
+      success: true,
+      message,
+      isHost: game.players[socket.id].isHost,
+      sessionId: game.players[socket.id].sessionId,
+      isReconnecting
+    });
 
-    // Send current game state to the new player (gameConfig first, then updateSeats)
+    // Send current game state to the player
     socket.emit('gameConfig', game.config);
     socket.emit('updateSeats', game.seats);
     socket.emit('updatePlayers', Object.values(game.players));
@@ -165,6 +220,12 @@ io.on('connection', (socket) => {
     // If roles are already assigned, send role to this player
     if (game.roles[socket.id]) {
       socket.emit('roleAssigned', game.roles[socket.id]);
+    }
+
+    // Notify other players about the reconnection
+    if (isReconnecting) {
+      io.to(roomId).emit('updateSeats', game.seats);
+      console.log(`[${roomId}] Player ${name} successfully reconnected`);
     }
   });
 
@@ -184,18 +245,20 @@ io.on('connection', (socket) => {
       return cb({ success: false, message: 'Seat is already taken' });
     }
 
-    // Remove player from previous seat if any
+    // Check if player is already seated - prevent seat changes
     const prevSeat = game.seats.find(s => s.player && s.player.id === socket.id);
     if (prevSeat) {
-      prevSeat.player = null;
+      return cb({ success: false, message: 'You are already seated. Cannot change seats once seated.' });
     }
 
-    // Assign to new seat
+    // Assign to new seat (only if player wasn't already seated)
     seat.player = {
       id: socket.id,
-      name: game.players[socket.id].name
+      name: game.players[socket.id].name,
+      isConnected: true // Mark as connected when initially seated
     };
     game.players[socket.id].seat = seatId;
+    game.players[socket.id].isConnected = true; // Mark player as connected
 
     // Notify all players in the room
     io.to(roomId).emit('updateSeats', game.seats);
@@ -363,12 +426,41 @@ io.on('connection', (socket) => {
         });
       });
 
-      // Wait 10 seconds, then tell everyone to close eyes and continue to werewolf phase
+      // Wait 10 seconds, then tell everyone to close eyes and continue to next phase
       setTimeout(() => {
         io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'loversClose') });
-        setTimeout(() => startWerewolfPhase(roomId), 2000);
+        setTimeout(() => {
+          // Check if guard exists, if so start guard phase, otherwise go to werewolf
+          const hasGuard = Object.values(game.players).some(p => p.role === 'guard');
+          if (hasGuard) {
+            startGuardPhase(roomId);
+          } else {
+            game.nightPhaseActions.guard = true; // Mark as complete if no guard
+            startWerewolfPhase(roomId);
+          }
+        }, 2000);
       }, 10000);
     }, 2000);
+  });
+
+  // Guard action
+  socket.on('guardProtect', ({ roomId, targetId }, cb) => {
+    const game = games[roomId];
+    if (!game || game.players[socket.id].role !== 'guard') {
+      return cb({ success: false, message: 'Invalid action' });
+    }
+
+    game.nightActions.guardProtect = targetId;
+
+    // Mark guard action as complete
+    game.nightPhaseActions.guard = true;
+
+    cb({ success: true, message: 'Player protected' });
+
+    // Notify that guard is closing eyes
+    io.to(roomId).emit('phaseComplete', { message: getMessage(roomId, 'guardClose') });
+
+    setTimeout(() => checkNightPhaseComplete(roomId), 2000);
   });
 
   // Werewolf action
@@ -603,25 +695,29 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
 
-    // Remove player from all games
+    // Mark player as disconnected but keep them in seat
     for (const roomId in games) {
       const game = games[roomId];
       if (game.players[socket.id]) {
-        // Remove from seat
+        // Mark player as disconnected but keep them in their seat
         const seat = game.seats.find(s => s.player && s.player.id === socket.id);
         if (seat) {
-          seat.player = null;
+          // Keep player in seat but mark as disconnected
+          game.players[socket.id].isConnected = false;
+          seat.player.isConnected = false;
         }
 
-        // Remove from players
-        delete game.players[socket.id];
-        delete game.roles[socket.id];
+        // Keep player in players list but mark as disconnected
+        game.players[socket.id].isConnected = false;
+        // Keep roles assigned (don't delete game.roles[socket.id])
 
-        // Notify other players
+        console.log(`[${roomId}] Player ${game.players[socket.id].name} disconnected but kept in seat ${game.players[socket.id].seat}`);
+
+        // Notify other players about the disconnection (but player stays in seat)
         io.to(roomId).emit('updateSeats', game.seats);
         io.to(roomId).emit('updatePlayers', Object.values(game.players));
 
-        // Update seats status
+        // Update seats status (seats remain filled, just mark as disconnected)
         const filledSeats = game.seats.filter(s => s.player).length;
         io.to(roomId).emit('seatsStatus', {
           filled: filledSeats,
@@ -653,6 +749,7 @@ function startNightPhase(roomId) {
   // Initialize night phase tracking
   game.nightPhaseActions = {
     cupid: false,
+    guard: false,
     werewolf: false,
     witch: false,
     seer: false,
@@ -731,7 +828,12 @@ function getSpecialCharactersInGame(game) {
     characters.push('cupid');
   }
 
-  // Include werewolf (werewolf acts after cupid)
+  // Include guard second (guard acts after cupid, before werewolf)
+  if (players.some(p => p.role === 'guard')) {
+    characters.push('guard');
+  }
+
+  // Include werewolf (werewolf acts after cupid and guard)
   characters.push('werewolf'); // Always include werewolf since it's tracked in nightPhaseActions
 
   // Check for witch
@@ -814,6 +916,44 @@ function startCupidPhase(roomId) {
     // No cupid, automatically mark cupid phase as complete
     console.log(`[${roomId}] No cupid present, marking cupid phase as complete`);
     game.nightPhaseActions.cupid = true;
+    setTimeout(() => startWerewolfPhase(roomId), 2000);
+  }
+}
+
+function startGuardPhase(roomId) {
+  const game = games[roomId];
+  if (!game) return;
+
+  const guards = Object.entries(game.players).filter(([id, player]) => player.role === 'guard');
+  const realGuards = guards.filter(([id, player]) => !player.isFake);
+
+  if (guards.length > 0) {
+    // Send audio message to ALL players
+    io.to(roomId).emit('guardPhaseAudio', {
+      message: getMessage(roomId, 'guardPhase')
+    });
+
+    if (realGuards.length > 0) {
+      // Send UI only to real guards
+      realGuards.forEach(([id]) => {
+        io.to(id).emit('guardPhaseUI', {
+          players: Object.values(game.players).map(p => ({
+            id: Object.keys(game.players).find(key => game.players[key] === p),
+            name: p.name,
+            seat: p.seat
+          }))
+        });
+      });
+    } else {
+      // Only fake guards, automatically complete guard phase
+      console.log(`[${roomId}] Only fake guards present, auto-completing guard phase`);
+      game.nightPhaseActions.guard = true;
+      setTimeout(() => startWerewolfPhase(roomId), 2000);
+    }
+  } else {
+    // No guard, automatically mark guard phase as complete
+    console.log(`[${roomId}] No guard present, marking guard phase as complete`);
+    game.nightPhaseActions.guard = true;
     setTimeout(() => startWerewolfPhase(roomId), 2000);
   }
 }
@@ -1000,7 +1140,10 @@ function startDayPhase(roomId) {
   // Calculate who died this night
   let deaths = [];
 
-  if (game.nightActions.werewolfKill && !game.nightActions.witchSave) {
+  // Check werewolf kill (must not be saved by witch AND not protected by guard)
+  if (game.nightActions.werewolfKill &&
+      !game.nightActions.witchSave &&
+      game.nightActions.werewolfKill !== game.nightActions.guardProtect) {
     deaths.push(game.nightActions.werewolfKill);
   }
 

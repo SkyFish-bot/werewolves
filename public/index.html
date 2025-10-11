@@ -92,6 +92,23 @@
       background-color: #28a745;
     }
 
+    .seat.disconnected {
+      background-color: #ffc107;
+      color: #856404;
+      cursor: not-allowed;
+      border: 2px dashed #856404;
+    }
+
+    .seat.disconnected:hover {
+      background-color: #ffc107;
+    }
+
+    .seat.disconnected .seat-player::after {
+      content: " (Disconnected)";
+      font-size: 12px;
+      font-style: italic;
+    }
+
     /* Game phase seat states */
     .seat.selectable {
       border-color: #ffc107;
@@ -528,6 +545,7 @@
     let isHost = false;
     let currentRole = null;
     let pendingSeats = null; // Store seats data if received before seating area is created
+    let sessionId = null; // Store session ID for reconnection
 
     // Role descriptions
     const roleDescriptions = {
@@ -618,8 +636,14 @@
       const werewolvesInput = document.getElementById('numWerewolves');
       const villagersInput = document.getElementById('numVillagers');
 
-      // Update max values
-      werewolvesInput.max = Math.floor(totalPlayers / 3);
+      // Update max values - allow 4 werewolves for 11 players
+      let maxWerewolves;
+      if (totalPlayers >= 11) {
+        maxWerewolves = 4;
+      } else {
+        maxWerewolves = Math.floor(totalPlayers / 3);
+      }
+      werewolvesInput.max = maxWerewolves;
       villagersInput.max = totalPlayers - 1;
 
       // Auto-update villagers count
@@ -691,7 +715,97 @@
       });
     }
 
-    // Join Game
+    // Load session data from localStorage
+    function loadSession() {
+      try {
+        const sessionData = localStorage.getItem('werewolfGameSession');
+        if (sessionData) {
+          const data = JSON.parse(sessionData);
+          return data;
+        }
+      } catch (error) {
+        console.log('Error loading session:', error);
+        localStorage.removeItem('werewolfGameSession');
+      }
+      return null;
+    }
+
+    // Save session data to localStorage
+    function saveSession(data) {
+      try {
+        localStorage.setItem('werewolfGameSession', JSON.stringify(data));
+      } catch (error) {
+        console.log('Error saving session:', error);
+      }
+    }
+
+    // Clear session data
+    function clearSession() {
+      localStorage.removeItem('werewolfGameSession');
+    }
+
+    // Check for existing session on page load
+    function checkForExistingSession() {
+      const session = loadSession();
+      if (session && session.roomId && session.playerName && session.sessionId) {
+        // Pre-fill the form with saved data
+        document.getElementById('playerName').value = session.playerName;
+        document.getElementById('roomCode').value = session.roomId;
+
+        // Show reconnection option
+        const landingMessage = document.getElementById('landingMessage');
+        landingMessage.innerHTML = `
+          <div class="success">
+            Found previous game session: Room ${session.roomId} as ${session.playerName}
+            <br>
+            <button class="button success" onclick="reconnectToGame()" style="margin: 10px;">🔄 Reconnect to Game</button>
+            <button class="button" onclick="clearSession(); location.reload();" style="margin: 10px;">❌ Start Fresh</button>
+          </div>
+        `;
+      }
+    }
+
+    // Reconnect to previous game
+    function reconnectToGame() {
+      const session = loadSession();
+      if (!session) {
+        showMessage('landingMessage', 'No saved session found', 'error');
+        return;
+      }
+
+      socket.emit('joinGame', {
+        roomId: session.roomId,
+        name: session.playerName,
+        sessionId: session.sessionId
+      }, (response) => {
+        if (response.success) {
+          currentRoom = session.roomId;
+          isHost = response.isHost;
+          sessionId = response.sessionId;
+
+          // Update session with new socket connection
+          saveSession({
+            roomId: currentRoom,
+            playerName: session.playerName,
+            sessionId: sessionId
+          });
+
+          showLobbyPage();
+          document.getElementById('displayRoomCode').textContent = currentRoom;
+
+          const message = response.isReconnecting ?
+            'Successfully reconnected to your game! Welcome back! 🎉' :
+            response.message;
+          showMessage('lobbyMessage', message, 'success');
+        } else {
+          // Reconnection failed, clear invalid session
+          clearSession();
+          showMessage('landingMessage', response.message, 'error');
+        }
+      });
+    }
+
+    // Join Game (updated to handle session persistence)
     function joinGame() {
       const name = document.getElementById('playerName').value.trim();
       const roomCode = document.getElementById('roomCode').value.trim().toUpperCase();
@@ -706,13 +820,37 @@
         return;
       }
 
-      socket.emit('joinGame', { roomId: roomCode, name }, (response) => {
+      // Check if we have a previous session for this room and player
+      const existingSession = loadSession();
+      const existingSessionId = (existingSession &&
+                                existingSession.roomId === roomCode &&
+                                existingSession.playerName === name) ?
+                                existingSession.sessionId : null;
+
+      socket.emit('joinGame', {
+        roomId: roomCode,
+        name: name,
+        sessionId: existingSessionId
+      }, (response) => {
         if (response.success) {
           currentRoom = roomCode;
           isHost = response.isHost;
+          sessionId = response.sessionId;
+
+          // Save session data for persistence
+          saveSession({
+            roomId: roomCode,
+            playerName: name,
+            sessionId: sessionId
+          });
+
           showLobbyPage();
           document.getElementById('displayRoomCode').textContent = roomCode;
-          showMessage('lobbyMessage', response.message, 'success');
+
+          const message = response.isReconnecting ?
+            'Successfully reconnected to your game! Welcome back! 🎉' :
+            response.message;
+          showMessage('lobbyMessage', message, 'success');
         } else {
           showMessage('landingMessage', response.message, 'error');
         }
@@ -771,10 +909,19 @@
 
         if (seat.player) {
           seatElement.classList.add('occupied');
+
+          // Check if player is disconnected
+          if (seat.player.isConnected === false) {
+            seatElement.classList.add('disconnected');
+            seatElement.classList.remove('occupied');
+          } else {
+            seatElement.classList.remove('disconnected');
+          }
+
           playerElement.textContent = seat.player.name;
           seatElement.onclick = null; // Remove click handler
         } else {
-          seatElement.classList.remove('occupied');
+          seatElement.classList.remove('occupied', 'disconnected');
           playerElement.textContent = '';
           seatElement.onclick = () => chooseSeat(seat.id);
         }
@@ -1548,7 +1695,6 @@
           }
         });
       } else if (currentPhase === 'witch') {
-
         socket.emit('witchPoison', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
           if (response.success) {
             witchActions.poisoned = true;
@@ -1559,6 +1705,16 @@
             resetSeatStates();
             selectedPlayerId = null;
             document.getElementById('confirmSelection').style.display = 'none';
+          }
+        });
+      } else if (currentPhase === 'guard') {
+        socket.emit('guardProtect', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
+          if (response.success) {
+            hideGameActionUI();
+            showActionResult('Player protected! Waiting for next phase...');
+            selectedPlayerId = null;
+          } else {
+            showActionResult(response.message, 'error');
           }
         });
       }
@@ -1786,6 +1942,57 @@
       }
     });
 
+    // Guard Phase Event Listeners
+    socket.on('guardPhaseAudio', (data) => {
+      currentPhase = 'guard';
+      showGameStatus('night', '🛡️ Guard Turn', 'Guard, open your eyes and choose a player to protect');
+      // Everyone hears this audio
+      speakText(data.message);
+    });
+
+    socket.on('guardPhaseUI', (data) => {
+      // Only guard sees this UI - show action controls
+      setTimeout(() => {
+        // Hide all previous phase buttons first
+        hideAllPhaseButtons();
+
+        document.getElementById('actionMessage').textContent = 'Choose a player to protect:';
+        document.getElementById('actionControls').style.display = 'block';
+
+        // Make all occupied seats selectable for guard
+        data.players.forEach(player => {
+          const seat = document.querySelector(`[data-seat="${player.seat}"]`);
+          if (seat && seat.classList.contains('occupied')) {
+            seat.classList.add('selectable');
+            seat.setAttribute('data-player-id', player.id);
+            seat.onclick = () => selectSeatForAction(player.seat, player.id);
+          }
+        });
+
+        // Show confirmation button (reuse existing one)
+        document.getElementById('confirmSelection').style.display = 'inline-block';
+
+      }, 2000); // Delay to let audio finish
+    });
+
+    // Function to handle guard's protection selection
+    function confirmGuardSelection() {
+      if (!selectedPlayerId) {
+        showActionResult('Please select a player to protect', 'error');
+        return;
+      }
+
+      socket.emit('guardProtect', { roomId: currentRoom, targetId: selectedPlayerId }, (response) => {
+        if (response.success) {
+          hideGameActionUI();
+          showActionResult('Player protected! Waiting for next phase...');
+          selectedPlayerId = null;
+        } else {
+          showActionResult(response.message, 'error');
+        }
+      });
+    }
+
     // Witch Phase - Lobby-based UI
     socket.on('witchPhaseAudio', (data) => {
       currentPhase = 'witch';
@@ -1966,6 +2173,11 @@
       document.querySelectorAll('.special-roles input').forEach(checkbox => {
         checkbox.addEventListener('change', updateRoleInputs);
       });
+    });
+
+    // Check for existing session when page loads
+    window.addEventListener('load', () => {
+      checkForExistingSession();
     });
   </script>
 </body>
