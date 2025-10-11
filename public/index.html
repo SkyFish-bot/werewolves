@@ -439,6 +439,7 @@
         <label><input type="checkbox" value="fool"> 🃏 Fool</label>
         <label><input type="checkbox" value="guard"> 🛡️ Guard</label>
         <label><input type="checkbox" value="cupid"> 💘 Cupid</label>
+        <label><input type="checkbox" value="knight"> ⚔️ Knight</label>
       </div>
 
       <div id="roleValidation" class="error" style="display: none;"></div>
@@ -585,7 +586,8 @@
         'fool': '🃏 You are the Fool! You win if the villagers win',
         'guard': '🛡️ You are the Guard! You can protect one player each night.',
         'cupid': '💘 You are Cupid! On the first night, you choose two players to fall in love.',
-        'orphan': '👶 You are the Orphan! Choose your father at the beginning of the game.'
+        'orphan': '👶 You are the Orphan! Choose your father at the beginning of the game.',
+        'knight': '⚔️ You are the Knight! You can challenge any player once during the day to reveal white wolf.'
       },
       zh: {
         'werewolf': '🐺 你是狼人！在夜晚与其他狼人一起消灭村民。',
@@ -597,6 +599,7 @@
         'fool': '🃏 你是白痴！如果村民获胜，你就获胜。',
         'guard': '🛡️ 你是守卫！每个夜晚你可以保护一个玩家。',
         'cupid': '💘 你是丘比特！在第一个夜晚，你选择两个玩家成为恋人。',
+        'knight': '⚔️ 你是骑士！你可以在白天挑战任何玩家一次以揭示白狼王。',
         'orphan': '👶 你是孤儿！在游戏开始时选择你的父亲。'
       }
     };
@@ -673,7 +676,8 @@
         'fool': '/images/fool.jpg',
         'guard': '/images/guard.jpg',
         'cupid': '/images/cubid.jpg', // Note: the file is named 'cubid.jpg'
-        'orphan': '/images/orphan.png'
+        'orphan': '/images/orphan.png',
+        'knight': '/images/knight.png'
       };
 
       return roleImageMap[role] || null;
