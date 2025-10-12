@@ -1877,6 +1877,9 @@
 
     // Helper function to hide all phase-specific buttons
     function hideAllPhaseButtons() {
+      // Hide orphan buttons
+      document.getElementById('orphanConfirmBtn') && (document.getElementById('orphanConfirmBtn').style.display = 'none');
+
       // Hide cupid buttons
       document.getElementById('cupidConfirmBtn') && (document.getElementById('cupidConfirmBtn').style.display = 'none');
 
